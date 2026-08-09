@@ -1,0 +1,6 @@
+{
+  "deno.enable": true,
+  "deno.config": "${workspaceFolder}/supabase/functions/isri-api/deno.json",
+  "deno.path": "${workspaceFolder}/.tools/deno.exe",
+  "typescript.tsserver.experimental.enableProjectDiagnostics": false
+}

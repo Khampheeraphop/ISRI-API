@@ -1,0 +1,5 @@
+{
+  "tasks": {
+    "check": "deno check supabase/functions/isri-api/index.ts"
+  }
+}
