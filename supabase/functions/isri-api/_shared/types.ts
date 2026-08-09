@@ -1,6 +1,6 @@
 import type { SupabaseClient } from "npm:@supabase/supabase-js@2";
 
-export type AppRole = "reporter" | "technician" | "admin";
+export type AppRole = "reporter" | "technician" | "dispatcher" | "admin";
 export type ApprovalStatus = "pending" | "approved" | "rejected";
 export type Specialty =
   | "electrical"
@@ -32,6 +32,7 @@ export const allowedSpecialties = new Set<Specialty>([
 export const allowedRoles = new Set<AppRole>([
   "reporter",
   "technician",
+  "dispatcher",
   "admin",
 ]);
 export const allowedCategories = new Set([

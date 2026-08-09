@@ -21,7 +21,10 @@ import {
 import { ProfileRepository } from "./repositories/profileRepository.ts";
 import { LocationRepository } from "./repositories/locationRepository.ts";
 import { IncidentRepository } from "./repositories/incidentRepository.ts";
-import { FileRepository, type IncidentAttachment } from "./repositories/fileRepository.ts";
+import {
+  FileRepository,
+  type IncidentAttachment,
+} from "./repositories/fileRepository.ts";
 
 async function requireSession(req: Request) {
   const supabaseUrl = Deno.env.get("SUPABASE_URL");
@@ -129,12 +132,20 @@ Deno.serve(async (req) => {
 
     if (req.method === "POST" && pathname === "/admin/locations") {
       requireAdmin(profile);
-      return json({ data: await locations.create(locationInput(await parseJson(req))) }, 201);
+      return json(
+        { data: await locations.create(locationInput(await parseJson(req))) },
+        201,
+      );
     }
-    const locationMatch = pathname.match(/^\/admin\/locations\/([0-9a-f-]{36})$/i);
+    const locationMatch = pathname.match(
+      /^\/admin\/locations\/([0-9a-f-]{36})$/i,
+    );
     if (req.method === "PATCH" && locationMatch) {
       requireAdmin(profile);
-      const location = await locations.update(locationMatch[1], locationInput(await parseJson(req)));
+      const location = await locations.update(
+        locationMatch[1],
+        locationInput(await parseJson(req)),
+      );
       if (!location) throw new HttpError("Location was not found.", 404);
       return json({ data: location });
     }
@@ -146,15 +157,20 @@ Deno.serve(async (req) => {
 
     if (req.method === "POST" && pathname === "/uploads/incident-attachments") {
       if (!isApproved(profile) || profile.role !== "reporter")
-        throw new HttpError("Only approved reporters can upload incident attachments.", 403);
+        throw new HttpError(
+          "Only approved reporters can upload incident attachments.",
+          403,
+        );
       const body = await parseJson(req);
       try {
-        return json({ data: await files.createIncidentUpload({
-          userId: profile.id,
-          fileName: typeof body?.fileName === "string" ? body.fileName : "",
-          mimeType: typeof body?.mimeType === "string" ? body.mimeType : "",
-          sizeBytes: typeof body?.sizeBytes === "number" ? body.sizeBytes : 0,
-        }) });
+        return json({
+          data: await files.createIncidentUpload({
+            userId: profile.id,
+            fileName: typeof body?.fileName === "string" ? body.fileName : "",
+            mimeType: typeof body?.mimeType === "string" ? body.mimeType : "",
+            sizeBytes: typeof body?.sizeBytes === "number" ? body.sizeBytes : 0,
+          }),
+        });
       } catch (cause) {
         if (cause instanceof Error) throw new HttpError(cause.message);
         throw cause;
@@ -164,6 +180,36 @@ Deno.serve(async (req) => {
     if (req.method === "GET" && pathname === "/incidents/mine") {
       requireApproved(profile);
       return json({ data: await incidents.listForReporter(profile.id) });
+    }
+    const incidentMatch = pathname.match(/^\/incidents\/([0-9a-f-]{36})$/i);
+    if (req.method === "GET" && incidentMatch) {
+      if (!isApproved(profile) || profile.role !== "reporter")
+        throw new HttpError("Reporter access is required.", 403);
+      const detail = await incidents.findForReporter(
+        incidentMatch[1],
+        profile.id,
+      );
+      if (!detail) throw new HttpError("Incident was not found.", 404);
+      const linkedFiles = (
+        detail.fileLinks as unknown as Array<{
+          files: Array<{
+            bucket: string;
+            object_path: string;
+            file_name: string;
+            mime_type: string;
+            size_bytes: number;
+          }>;
+        }>
+      ).flatMap((link) => link.files);
+      const attachments = await Promise.all(
+        linkedFiles.map(async (file) => ({
+          fileName: file.file_name,
+          mimeType: file.mime_type,
+          sizeBytes: file.size_bytes,
+          url: await files.createSignedReadUrl(file.bucket, file.object_path),
+        })),
+      );
+      return json({ data: { ...detail.incident, attachments } });
     }
     if (req.method === "POST" && pathname === "/incidents") {
       if (!isApproved(profile) || profile.role !== "reporter")
@@ -183,7 +229,9 @@ Deno.serve(async (req) => {
         typeof body?.assetName === "string"
           ? body.assetName.trim() || null
           : null;
-      const attachments: unknown[] = Array.isArray(body?.attachments) ? body.attachments : [];
+      const attachments: unknown[] = Array.isArray(body?.attachments)
+        ? body.attachments
+        : [];
       if (
         !locationId ||
         !allowedCategories.has(category) ||
@@ -192,7 +240,12 @@ Deno.serve(async (req) => {
         description.length > 4000
       )
         throw new HttpError("Incident data is invalid.");
-      if (attachments.length > 3 || !attachments.every((file: unknown) => FileRepository.validateIncidentAttachment(file, profile.id)))
+      if (
+        attachments.length > 3 ||
+        !attachments.every((file: unknown) =>
+          FileRepository.validateIncidentAttachment(file, profile.id),
+        )
+      )
         throw new HttpError("Incident attachments are invalid.");
       const location = await locations.findById(locationId);
       if (!location) throw new HttpError("Location was not found.", 404);

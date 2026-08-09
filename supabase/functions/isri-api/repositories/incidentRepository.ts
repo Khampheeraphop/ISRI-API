@@ -55,16 +55,35 @@ export class IncidentRepository {
         )
         .select("id");
       if (filesError) throw filesError;
-      const { error: linksError } = await this.db
-        .from("incident_files")
-        .insert(
-          (fileRows ?? []).map((file) => ({
-            incident_id: data.id,
-            file_id: file.id,
-          })),
-        );
+      const { error: linksError } = await this.db.from("incident_files").insert(
+        (fileRows ?? []).map((file) => ({
+          incident_id: data.id,
+          file_id: file.id,
+        })),
+      );
       if (linksError) throw linksError;
     }
     return data;
+  }
+
+  async findForReporter(id: string, reporterId: string) {
+    const { data: incident, error: incidentError } = await this.db
+      .from("incidents")
+      .select(
+        "id, ticket_number, location_id, location_label, asset_name, category, urgency_reported, description, status, created_at, updated_at",
+      )
+      .eq("id", id)
+      .eq("reporter_id", reporterId)
+      .maybeSingle();
+    if (incidentError) throw incidentError;
+    if (!incident) return null;
+    const { data: fileLinks, error: filesError } = await this.db
+      .from("incident_files")
+      .select(
+        "files(id, bucket, object_path, file_name, mime_type, size_bytes)",
+      )
+      .eq("incident_id", id);
+    if (filesError) throw filesError;
+    return { incident, fileLinks: fileLinks ?? [] };
   }
 }

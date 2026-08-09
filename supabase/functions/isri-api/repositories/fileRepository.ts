@@ -37,6 +37,14 @@ export class FileRepository {
     return { objectPath, token: data.token, bucket: incidentAttachmentBucket };
   }
 
+  async createSignedReadUrl(bucket: string, objectPath: string) {
+    const { data, error } = await this.db.storage
+      .from(bucket)
+      .createSignedUrl(objectPath, 300);
+    if (error) throw error;
+    return data.signedUrl;
+  }
+
   static validateIncidentAttachment(
     attachment: unknown,
     userId: string,
