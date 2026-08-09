@@ -77,38 +77,37 @@ export class DashboardRepository {
       activeWorkOrdersResult,
       recentHistoryResult,
       techniciansResult,
-    ] =
-      await Promise.all([
-        this.db
-          .from("incidents")
-          .select(
-            "id, ticket_number, location_label, asset_name, category, urgency_reported, status, created_at",
-          )
-          .gte("created_at", since.toISOString())
-          .order("created_at", { ascending: false }),
-        this.db
-          .from("incidents")
-          .select(
-            "id, ticket_number, location_label, asset_name, category, urgency_reported, status, created_at",
-          )
-          .in("status", activeIncidentStatuses),
-        this.db
-          .from("work_orders")
-          .select(
-            "id, incident_id, technician_id, status, respond_due_at, resolve_due_at, assigned_at, created_at",
-          )
-          .in("status", [...activeWorkOrderStatuses]),
-        this.db
-          .from("work_order_history")
-          .select("work_order_id, status, changed_at")
-          .gte("changed_at", since.toISOString()),
-        this.db
-          .from("profiles")
-          .select("id, full_name")
-          .eq("approval_status", "approved")
-          .eq("role", "technician")
-          .order("full_name"),
-      ]);
+    ] = await Promise.all([
+      this.db
+        .from("incidents")
+        .select(
+          "id, ticket_number, location_label, asset_name, category, urgency_reported, status, created_at",
+        )
+        .gte("created_at", since.toISOString())
+        .order("created_at", { ascending: false }),
+      this.db
+        .from("incidents")
+        .select(
+          "id, ticket_number, location_label, asset_name, category, urgency_reported, status, created_at",
+        )
+        .in("status", activeIncidentStatuses),
+      this.db
+        .from("work_orders")
+        .select(
+          "id, incident_id, technician_id, status, respond_due_at, resolve_due_at, assigned_at, created_at",
+        )
+        .in("status", [...activeWorkOrderStatuses]),
+      this.db
+        .from("work_order_history")
+        .select("work_order_id, status, changed_at")
+        .gte("changed_at", since.toISOString()),
+      this.db
+        .from("profiles")
+        .select("id, full_name")
+        .eq("approval_status", "approved")
+        .eq("role", "technician")
+        .order("full_name"),
+    ]);
 
     for (const result of [
       incidentsResult,
@@ -122,8 +121,8 @@ export class DashboardRepository {
 
     const incidents = (incidentsResult.data ?? []) as IncidentRow[];
     const openIncidents = (openIncidentsResult.data ?? []) as IncidentRow[];
-    const activeWorkOrders =
-      (activeWorkOrdersResult.data ?? []) as WorkOrderRow[];
+    const activeWorkOrders = (activeWorkOrdersResult.data ??
+      []) as WorkOrderRow[];
     const recentHistory = (recentHistoryResult.data ?? []) as HistoryRow[];
     const technicians = (techniciansResult.data ?? []) as TechnicianRow[];
 
@@ -144,13 +143,16 @@ export class DashboardRepository {
             .in("work_order_id", recentOrderIds)
             .order("changed_at"),
         ])
-      : [{ data: [], error: null }, { data: [], error: null }];
+      : [
+          { data: [], error: null },
+          { data: [], error: null },
+        ];
     if (recentOrdersResult.error) throw recentOrdersResult.error;
     if (recentOrderHistoryResult.error) throw recentOrderHistoryResult.error;
 
     const recentOrders = (recentOrdersResult.data ?? []) as WorkOrderRow[];
-    const fullRecentOrderHistory =
-      (recentOrderHistoryResult.data ?? []) as HistoryRow[];
+    const fullRecentOrderHistory = (recentOrderHistoryResult.data ??
+      []) as HistoryRow[];
     const incidentById = new Map(
       [...incidents, ...openIncidents].map((item) => [item.id, item]),
     );
@@ -171,7 +173,8 @@ export class DashboardRepository {
       return remaining >= 0 && remaining <= 24 * 60 * 60 * 1000;
     });
     const pendingAssignment = openIncidents.filter(
-      (item) => item.status === "submitted" || item.status === "pending_assignment",
+      (item) =>
+        item.status === "submitted" || item.status === "pending_assignment",
     );
     const pendingReview = openWorkOrders.filter((item) =>
       ["pending_parts_approval", "pending_repair_approval"].includes(
@@ -222,7 +225,12 @@ export class DashboardRepository {
 
     const hotspotMap = new Map<
       string,
-      { locationLabel: string; assetName: string | null; count: number; openCount: number }
+      {
+        locationLabel: string;
+        assetName: string | null;
+        count: number;
+        openCount: number;
+      }
     >();
     for (const incident of incidents) {
       const key = `${incident.location_label}|${incident.asset_name ?? ""}`;
@@ -303,7 +311,10 @@ export class DashboardRepository {
         }, {}),
       ).map(([status, count]) => ({ status, count })),
       hotspots: [...hotspotMap.values()]
-        .sort((left, right) => right.count - left.count || right.openCount - left.openCount)
+        .sort(
+          (left, right) =>
+            right.count - left.count || right.openCount - left.openCount,
+        )
         .slice(0, 5),
       technicianWorkload: technicians
         .map((technician) => ({

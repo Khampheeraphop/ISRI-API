@@ -92,7 +92,8 @@ export class ProfileRepository {
         approved_by: input.approvalStatus === "approved" ? input.actedBy : null,
         approved_at:
           input.approvalStatus === "approved" ? new Date().toISOString() : null,
-        rejection_reason: input.approvalStatus === "rejected" ? input.note : null,
+        rejection_reason:
+          input.approvalStatus === "rejected" ? input.note : null,
       })
       .eq("id", input.id)
       .select(profileColumns)

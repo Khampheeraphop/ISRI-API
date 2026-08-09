@@ -86,7 +86,10 @@ export class LocationRepository {
   }
 
   async delete(id: string) {
-    const { error } = await this.db.from("managed_locations").delete().eq("id", id);
+    const { error } = await this.db
+      .from("managed_locations")
+      .delete()
+      .eq("id", id);
     if (error) throw error;
   }
 }
