@@ -102,11 +102,7 @@ function locationInput(body: Record<string, unknown> | null) {
       throw new HttpError("Location data is invalid.");
     return value;
   };
-  const code = text("code").toUpperCase();
-  if (!/^BLD-[A-Z0-9]+-F[A-Z0-9]+-Z[A-Z0-9]+$/.test(code))
-    throw new HttpError("Location code format is invalid.");
   return {
-    code,
     building: text("building"),
     floor: text("floor"),
     zone: text("zone"),
@@ -711,18 +707,9 @@ Deno.serve(async (req) => {
         actorId: profile.id,
         note: action.note,
         eventType: action.transition.eventType,
+        incidentStatus: action.transition.incidentStatus,
+        attachments: attachments as WorkOrderAttachment[],
       });
-      if (attachments.length)
-        await files.linkWorkOrderAttachments({
-          workOrderId: result.id,
-          historyId: result.historyId,
-          userId: profile.id,
-          attachments: attachments as WorkOrderAttachment[],
-        });
-      await incidents.updateStatus(
-        result.incident_id,
-        action.transition.incidentStatus,
-      );
       return json({ data: result });
     }
     const incidentMatch = pathname.match(/^\/incidents\/([0-9a-f-]{36})$/i);

@@ -38,7 +38,6 @@ export class LocationRepository {
   }
 
   async create(input: {
-    code: string;
     building: string;
     floor: string;
     zone: string;
@@ -47,7 +46,9 @@ export class LocationRepository {
     const { data, error } = await this.db
       .from("managed_locations")
       .insert({
-        code: input.code,
+        // The QR token is an opaque, server-generated identifier. It is never
+        // entered by an administrator and remains stable when location details change.
+        code: `LOC-${crypto.randomUUID().replaceAll("-", "").slice(0, 12).toUpperCase()}`,
         building: input.building,
         floor: input.floor,
         zone: input.zone,
@@ -62,7 +63,6 @@ export class LocationRepository {
   async update(
     id: string,
     input: {
-      code: string;
       building: string;
       floor: string;
       zone: string;
@@ -72,7 +72,6 @@ export class LocationRepository {
     const { data, error } = await this.db
       .from("managed_locations")
       .update({
-        code: input.code,
         building: input.building,
         floor: input.floor,
         zone: input.zone,

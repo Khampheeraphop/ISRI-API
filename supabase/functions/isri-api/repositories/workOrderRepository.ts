@@ -90,28 +90,33 @@ export class WorkOrderRepository {
       actorId: string;
       note: string | null;
       eventType: string;
+      incidentStatus: string;
+      attachments: Array<{
+        objectPath: string;
+        fileName: string;
+        mimeType: string;
+        sizeBytes: number;
+      }>;
     },
   ) {
-    const { data, error } = await this.db
-      .from("work_orders")
-      .update({ status: input.status })
-      .eq("id", id)
-      .select("id, incident_id, status")
-      .single();
+    const { data, error } = await this.db.rpc("apply_work_order_action", {
+      p_work_order_id: id,
+      p_status: input.status,
+      p_actor_id: input.actorId,
+      p_note: input.note,
+      p_event_type: input.eventType,
+      p_incident_status: input.incidentStatus,
+      p_attachments: input.attachments,
+    });
     if (error) throw error;
-    const { data: history, error: historyError } = await this.db
-      .from("work_order_history")
-      .insert({
-        work_order_id: id,
-        status: input.status,
-        changed_by: input.actorId,
-        note: input.note,
-        event_type: input.eventType,
-      })
-      .select("id")
-      .single();
-    if (historyError) throw historyError;
-    return { ...data, historyId: history.id };
+    const result = Array.isArray(data) ? data[0] : data;
+    if (!result) throw new Error("Work order action did not return a result.");
+    return {
+      id: result.id,
+      incident_id: result.incident_id,
+      status: result.status,
+      historyId: result.history_id,
+    };
   }
 
   async historyForIncident(incidentId: string) {
