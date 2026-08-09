@@ -132,7 +132,12 @@ function rewardInput(body: Record<string, unknown> | null) {
   const stock = Number(body?.stock);
   const isActive = body?.isActive === true;
   const rewardPeriod = body?.rewardPeriod;
-  if (name.length < 2 || name.length > 200 || description.length < 2 || description.length > 2000)
+  if (
+    name.length < 2 ||
+    name.length > 200 ||
+    description.length < 2 ||
+    description.length > 2000
+  )
     throw new HttpError("Reward details are invalid.");
   if (!Number.isInteger(pointCost) || pointCost < 1 || pointCost > 1_000_000)
     throw new HttpError("Reward point cost is invalid.");
@@ -140,7 +145,14 @@ function rewardInput(body: Record<string, unknown> | null) {
     throw new HttpError("Reward stock is invalid.");
   if (rewardPeriod !== "standard" && rewardPeriod !== "annual")
     throw new HttpError("Reward period is invalid.");
-  return { name, description, pointCost, stock, isActive, rewardPeriod } as const;
+  return {
+    name,
+    description,
+    pointCost,
+    stock,
+    isActive,
+    rewardPeriod,
+  } as const;
 }
 
 function campaignInput(body: Record<string, unknown> | null): CampaignInput {
@@ -153,14 +165,31 @@ function campaignInput(body: Record<string, unknown> | null): CampaignInput {
   const startDate = typeof body?.startDate === "string" ? body.startDate : "";
   const endDate = typeof body?.endDate === "string" ? body.endDate : "";
   const isDate = (value: string) => /^\d{4}-\d{2}-\d{2}$/.test(value);
-  if (name.length < 2 || name.length > 200 || prizeDescription.length < 2 || prizeDescription.length > 2000)
+  if (
+    name.length < 2 ||
+    name.length > 200 ||
+    prizeDescription.length < 2 ||
+    prizeDescription.length > 2000
+  )
     throw new HttpError("Campaign details are invalid.");
-  if (periodType !== "monthly" && periodType !== "yearly" && periodType !== "custom")
+  if (
+    periodType !== "monthly" &&
+    periodType !== "yearly" &&
+    periodType !== "custom"
+  )
     throw new HttpError("Campaign period type is invalid.");
   if (!isDate(startDate) || !isDate(endDate) || endDate < startDate)
     throw new HttpError("Campaign dates are invalid.");
   return { name, periodType, startDate, endDate, prizeDescription };
 }
+
+const categoryByCode: Record<string, string> = {
+  electrical: "ไฟฟ้า",
+  plumbing: "ประปา",
+  air_conditioning: "เครื่องปรับอากาศ",
+  elevator: "ลิฟต์",
+  building: "โครงสร้าง/พื้นผิวอาคาร (ผนัง พื้น เพดาน ประตู)",
+};
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return optionsResponse();
@@ -278,11 +307,14 @@ Deno.serve(async (req) => {
     }
     if (req.method === "POST" && pathname === "/pm/schedules") {
       requireAdmin(profile);
-      return json({
-        data: await pmScheduleService.create(
-          parsePmScheduleInput(await parseJson(req)),
-        ),
-      }, 201);
+      return json(
+        {
+          data: await pmScheduleService.create(
+            parsePmScheduleInput(await parseJson(req)),
+          ),
+        },
+        201,
+      );
     }
     const pmScheduleMatch = pathname.match(
       /^\/pm\/schedules\/([0-9a-f-]{36})$/i,
@@ -326,7 +358,11 @@ Deno.serve(async (req) => {
     if (req.method === "GET" && pathname === "/rewards/catalog") {
       if (!isApproved(profile) || profile.role !== "reporter")
         throw new HttpError("Reporter access is required.", 403);
-      return json({ data: await Promise.all((await rewards.listCatalog()).map(withRewardImage)) });
+      return json({
+        data: await Promise.all(
+          (await rewards.listCatalog()).map(withRewardImage),
+        ),
+      });
     }
     if (req.method === "GET" && pathname === "/rewards/wallet") {
       if (!isApproved(profile) || profile.role !== "reporter")
@@ -341,24 +377,35 @@ Deno.serve(async (req) => {
         typeof body?.rewardItemId === "string" ? body.rewardItemId : "";
       if (!/^[0-9a-f-]{36}$/i.test(rewardItemId))
         throw new HttpError("Reward item is invalid.");
-      return json({ data: await rewards.redeem(profile.id, rewardItemId) }, 201);
+      return json(
+        { data: await rewards.redeem(profile.id, rewardItemId) },
+        201,
+      );
     }
     if (req.method === "GET" && pathname === "/admin/rewards") {
       requireAdmin(profile);
-      return json({ data: await Promise.all((await rewards.listCatalog(true)).map(withRewardImage)) });
+      return json({
+        data: await Promise.all(
+          (await rewards.listCatalog(true)).map(withRewardImage),
+        ),
+      });
     }
     if (req.method === "POST" && pathname === "/uploads/reward-images") {
       requireAdmin(profile);
       const body = await parseJson(req);
       try {
-        return json({ data: await files.createRewardImageUpload({
-          userId: profile.id,
-          fileName: typeof body?.fileName === "string" ? body.fileName : "",
-          mimeType: typeof body?.mimeType === "string" ? body.mimeType : "",
-          sizeBytes: typeof body?.sizeBytes === "number" ? body.sizeBytes : 0,
-        }) });
+        return json({
+          data: await files.createRewardImageUpload({
+            userId: profile.id,
+            fileName: typeof body?.fileName === "string" ? body.fileName : "",
+            mimeType: typeof body?.mimeType === "string" ? body.mimeType : "",
+            sizeBytes: typeof body?.sizeBytes === "number" ? body.sizeBytes : 0,
+          }),
+        });
       } catch (cause) {
-        throw new HttpError(cause instanceof Error ? cause.message : "Reward image is invalid.");
+        throw new HttpError(
+          cause instanceof Error ? cause.message : "Reward image is invalid.",
+        );
       }
     }
     if (req.method === "POST" && pathname === "/admin/rewards") {
@@ -367,10 +414,21 @@ Deno.serve(async (req) => {
       const image = body?.image;
       if (!FileRepository.validateRewardImage(image, profile.id))
         throw new HttpError("Reward image is required.");
-      const file = await files.createRewardImageRecord({ ...image, userId: profile.id });
-      return json({ data: await withRewardImage(await rewards.create({
-        ...rewardInput(body), imageFileId: file.id,
-      })) }, 201);
+      const file = await files.createRewardImageRecord({
+        ...image,
+        userId: profile.id,
+      });
+      return json(
+        {
+          data: await withRewardImage(
+            await rewards.create({
+              ...rewardInput(body),
+              imageFileId: file.id,
+            }),
+          ),
+        },
+        201,
+      );
     }
     const rewardMatch = pathname.match(/^\/admin\/rewards\/([0-9a-f-]{36})$/i);
     if (req.method === "PATCH" && rewardMatch) {
@@ -378,10 +436,16 @@ Deno.serve(async (req) => {
       const body = await parseJson(req);
       const image = body?.image;
       const imageFileId = FileRepository.validateRewardImage(image, profile.id)
-        ? (await files.createRewardImageRecord({ ...image, userId: profile.id })).id
+        ? (
+            await files.createRewardImageRecord({
+              ...image,
+              userId: profile.id,
+            })
+          ).id
         : undefined;
       const reward = await rewards.update(rewardMatch[1], {
-        ...rewardInput(body), imageFileId,
+        ...rewardInput(body),
+        imageFileId,
       });
       if (!reward) throw new HttpError("Reward item was not found.", 404);
       return json({ data: await withRewardImage(reward) });
@@ -411,7 +475,9 @@ Deno.serve(async (req) => {
       const campaign = await campaigns.findById(campaignLeaderboardMatch[1]);
       if (!campaign) throw new HttpError("Campaign was not found.", 404);
       const scores = await campaigns.listScores(campaign.id);
-      const names = await profiles.namesByIds(scores.map((score) => score.user_id));
+      const names = await profiles.namesByIds(
+        scores.map((score) => score.user_id),
+      );
       return json({
         data: {
           campaign,
@@ -432,7 +498,10 @@ Deno.serve(async (req) => {
       requireAdmin(profile);
       const campaign = await campaigns.close(campaignCloseMatch[1]);
       if (!campaign)
-        throw new HttpError("Campaign is already locked or was not found.", 409);
+        throw new HttpError(
+          "Campaign is already locked or was not found.",
+          409,
+        );
       return json({ data: campaign });
     }
     if (req.method === "PATCH" && campaignMatch) {
@@ -779,7 +848,11 @@ Deno.serve(async (req) => {
       const body = await parseJson(req);
       const locationId =
         typeof body?.locationId === "string" ? body.locationId : "";
-      const category = typeof body?.category === "string" ? body.category : "";
+      const categoryInput =
+        typeof body?.category === "string" ? body.category.trim() : "";
+      const category =
+        categoryByCode[categoryInput] ??
+        (allowedCategories.has(categoryInput) ? categoryInput : "");
       const urgencyReported =
         typeof body?.urgencyReported === "string" ? body.urgencyReported : "";
       const description =
@@ -791,14 +864,26 @@ Deno.serve(async (req) => {
       const attachments: unknown[] = Array.isArray(body?.attachments)
         ? body.attachments
         : [];
-      if (
-        !locationId ||
-        !allowedCategories.has(category) ||
-        !["critical", "urgent", "normal"].includes(urgencyReported) ||
-        description.length < 5 ||
-        description.length > 4000
-      )
-        throw new HttpError("Incident data is invalid.");
+      const invalidFields: string[] = [];
+      if (!/^[0-9a-f-]{36}$/i.test(locationId))
+        invalidFields.push("ตำแหน่งจาก QR Code");
+      if (!allowedCategories.has(category)) invalidFields.push("ประเภทปัญหา");
+      if (!["critical", "urgent", "normal"].includes(urgencyReported))
+        invalidFields.push("ระดับความเร่งด่วน");
+      if (description.length < 5 || description.length > 4000)
+        invalidFields.push("รายละเอียดปัญหา");
+      if (invalidFields.length) {
+        console.warn("Incident validation failed", {
+          invalidFields,
+          hasLocationId: Boolean(locationId),
+          category: categoryInput,
+          urgencyReported,
+          descriptionLength: description.length,
+        });
+        throw new HttpError(
+          `ข้อมูลแจ้งปัญหาไม่ถูกต้อง: ${invalidFields.join(", ")}`,
+        );
+      }
       if (
         attachments.length > 3 ||
         !attachments.every((file: unknown) =>
@@ -848,7 +933,11 @@ Deno.serve(async (req) => {
         : [];
       const note =
         typeof body?.note === "string" ? body.note.trim() || null : null;
-      if (!(["pending", "approved", "rejected"] as string[]).includes(approvalStatus))
+      if (
+        !(["pending", "approved", "rejected"] as string[]).includes(
+          approvalStatus,
+        )
+      )
         throw new HttpError("Approval status is invalid.");
       if (approvalMatch[1] === profile.id)
         throw new HttpError("You cannot change your own access.", 409);
