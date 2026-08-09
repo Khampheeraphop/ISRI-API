@@ -74,7 +74,7 @@ export class ProfileRepository {
 
   async setApproval(input: {
     id: string;
-    approvalStatus: Extract<ApprovalStatus, "approved" | "rejected">;
+    approvalStatus: ApprovalStatus;
     role: AppRole | null;
     specialties: Specialty[];
     actedBy: string;
@@ -86,12 +86,13 @@ export class ProfileRepository {
         approval_status: input.approvalStatus,
         role: input.approvalStatus === "approved" ? input.role : null,
         technician_specialties:
-          input.role === "technician" ? input.specialties : [],
+          input.approvalStatus === "approved" && input.role === "technician"
+            ? input.specialties
+            : [],
         approved_by: input.approvalStatus === "approved" ? input.actedBy : null,
         approved_at:
           input.approvalStatus === "approved" ? new Date().toISOString() : null,
-        rejection_reason:
-          input.approvalStatus === "rejected" ? input.note : null,
+        rejection_reason: input.approvalStatus === "rejected" ? input.note : null,
       })
       .eq("id", input.id)
       .select(profileColumns)
@@ -103,7 +104,10 @@ export class ProfileRepository {
         user_id: input.id,
         action: input.approvalStatus,
         role: input.approvalStatus === "approved" ? input.role : null,
-        specialties: input.role === "technician" ? input.specialties : [],
+        specialties:
+          input.approvalStatus === "approved" && input.role === "technician"
+            ? input.specialties
+            : [],
         note: input.note,
         acted_by: input.actedBy,
       });

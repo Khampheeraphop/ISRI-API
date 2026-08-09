@@ -28,6 +28,7 @@ import {
 } from "./repositories/fileRepository.ts";
 import { NotificationRepository } from "./repositories/notificationRepository.ts";
 import { WorkOrderRepository } from "./repositories/workOrderRepository.ts";
+import { DashboardRepository } from "./repositories/dashboardRepository.ts";
 import { validateWorkOrderAction } from "./services/workOrderWorkflowService.ts";
 
 async function requireSession(req: Request) {
@@ -99,6 +100,7 @@ Deno.serve(async (req) => {
     const files = new FileRepository(db);
     const notifications = new NotificationRepository(db);
     const workOrders = new WorkOrderRepository(db);
+    const dashboard = new DashboardRepository(db);
 
     const historyWithActors = async (incidentId: string) => {
       const history = await workOrders.historyForIncident(incidentId);
@@ -151,6 +153,15 @@ Deno.serve(async (req) => {
 
     if (req.method === "GET" && pathname === "/me")
       return json({ data: profile });
+
+    if (req.method === "GET" && pathname === "/dashboard/summary") {
+      requireAdmin(profile);
+      const requestedDays = Number(url.searchParams.get("days") ?? "30");
+      const days = [30, 90, 180, 365].includes(requestedDays)
+        ? requestedDays
+        : 30;
+      return json({ data: await dashboard.summary(days) });
+    }
 
     if (req.method === "GET" && pathname === "/notifications") {
       requireApproved(profile);
@@ -563,8 +574,10 @@ Deno.serve(async (req) => {
         : [];
       const note =
         typeof body?.note === "string" ? body.note.trim() || null : null;
-      if (!(["approved", "rejected"] as string[]).includes(approvalStatus))
+      if (!(["pending", "approved", "rejected"] as string[]).includes(approvalStatus))
         throw new HttpError("Approval status is invalid.");
+      if (approvalMatch[1] === profile.id)
+        throw new HttpError("You cannot change your own access.", 409);
       if (approvalStatus === "approved" && !allowedRoles.has(role as AppRole))
         throw new HttpError("A valid role is required for approval.");
       if (
