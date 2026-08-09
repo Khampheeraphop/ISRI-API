@@ -50,6 +50,16 @@ export class ProfileRepository {
     return data;
   }
 
+  async listApprovedByRole(role: AppRole) {
+    const { data, error } = await this.db
+      .from("profiles")
+      .select(profileColumns)
+      .eq("approval_status", "approved")
+      .eq("role", role);
+    if (error) throw error;
+    return data as Profile[];
+  }
+
   async setApproval(input: {
     id: string;
     approvalStatus: Extract<ApprovalStatus, "approved" | "rejected">;

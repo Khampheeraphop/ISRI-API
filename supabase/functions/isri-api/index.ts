@@ -25,6 +25,8 @@ import {
   FileRepository,
   type IncidentAttachment,
 } from "./repositories/fileRepository.ts";
+import { NotificationRepository } from "./repositories/notificationRepository.ts";
+import { WorkOrderRepository } from "./repositories/workOrderRepository.ts";
 
 async function requireSession(req: Request) {
   const supabaseUrl = Deno.env.get("SUPABASE_URL");
@@ -58,6 +60,14 @@ function requireAdmin(profile: Profile) {
     throw new HttpError("Administrator access is required.", 403);
 }
 
+function requireDispatcher(profile: Profile) {
+  if (
+    !isApproved(profile) ||
+    (profile.role !== "dispatcher" && profile.role !== "admin")
+  )
+    throw new HttpError("Dispatcher access is required.", 403);
+}
+
 function locationInput(body: Record<string, unknown> | null) {
   const text = (key: string, required = true) => {
     const value = typeof body?.[key] === "string" ? body[key].trim() : "";
@@ -85,9 +95,23 @@ Deno.serve(async (req) => {
     const locations = new LocationRepository(db);
     const incidents = new IncidentRepository(db);
     const files = new FileRepository(db);
+    const notifications = new NotificationRepository(db);
+    const workOrders = new WorkOrderRepository(db);
 
     if (req.method === "GET" && pathname === "/me")
       return json({ data: profile });
+
+    if (req.method === "GET" && pathname === "/notifications") {
+      requireApproved(profile);
+      return json({ data: await notifications.listForUser(profile.id) });
+    }
+    const notificationMatch = pathname.match(/^\/notifications\/([0-9a-f-]{36})\/read$/i);
+    if (req.method === "PATCH" && notificationMatch) {
+      requireApproved(profile);
+      const notification = await notifications.markRead(notificationMatch[1], profile.id);
+      if (!notification) throw new HttpError("Notification was not found.", 404);
+      return json({ data: notification });
+    }
 
     if (req.method === "PATCH" && pathname === "/me/onboarding") {
       const body = await parseJson(req);
@@ -180,6 +204,47 @@ Deno.serve(async (req) => {
     if (req.method === "GET" && pathname === "/incidents/mine") {
       requireApproved(profile);
       return json({ data: await incidents.listForReporter(profile.id) });
+    }
+    if (req.method === "GET" && pathname === "/dispatch/incidents") {
+      requireDispatcher(profile);
+      return json({ data: await incidents.listPendingAssignment() });
+    }
+    if (req.method === "GET" && pathname === "/dispatch/technicians") {
+      requireDispatcher(profile);
+      return json({ data: await profiles.listApprovedByRole("technician") });
+    }
+    if (req.method === "POST" && pathname === "/dispatch/work-orders") {
+      requireDispatcher(profile);
+      const body = await parseJson(req);
+      const incidentId =
+        typeof body?.incidentId === "string" ? body.incidentId : "";
+      const technicianId =
+        typeof body?.technicianId === "string" ? body.technicianId : "";
+      const incident = await incidents.findForDispatch(incidentId);
+      if (!incident)
+        throw new HttpError("Incident is not available for assignment.", 404);
+      const technician = await profiles.findById(technicianId);
+      if (
+        !technician ||
+        !isApproved(technician) ||
+        technician.role !== "technician"
+      )
+        throw new HttpError("Technician was not found.", 404);
+      const sla = await workOrders.getSlaRule(incident.urgency_reported);
+      if (!sla) throw new HttpError("SLA rule was not configured.", 409);
+      return json(
+        {
+          data: await workOrders.create({
+            incidentId,
+            technicianId,
+            assignedBy: profile.id,
+            incidentCreatedAt: incident.created_at,
+            responseMinutes: sla.response_minutes,
+            resolveMinutes: sla.resolve_minutes,
+          }),
+        },
+        201,
+      );
     }
     const incidentMatch = pathname.match(/^\/incidents\/([0-9a-f-]{36})$/i);
     if (req.method === "GET" && incidentMatch) {

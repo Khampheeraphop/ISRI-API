@@ -36,6 +36,7 @@ export class IncidentRepository {
         urgency_reported: input.urgencyReported,
         description: input.description,
         reporter_id: input.reporterId,
+        status: "pending_assignment",
       })
       .select("id, ticket_number, status, created_at")
       .single();
@@ -85,5 +86,36 @@ export class IncidentRepository {
       .eq("incident_id", id);
     if (filesError) throw filesError;
     return { incident, fileLinks: fileLinks ?? [] };
+  }
+
+  async findForDispatch(id: string) {
+    const { data, error } = await this.db
+      .from("incidents")
+      .select("id, ticket_number, urgency_reported, created_at")
+      .eq("id", id)
+      .eq("status", "pending_assignment")
+      .maybeSingle();
+    if (error) throw error;
+    return data;
+  }
+
+  async listPendingAssignment() {
+    const { data, error } = await this.db
+      .from("incidents")
+      .select(
+        "id, ticket_number, location_label, asset_name, category, urgency_reported, description, created_at",
+      )
+      .eq("status", "pending_assignment")
+      .order("created_at", { ascending: true });
+    if (error) throw error;
+    return data;
+  }
+
+  async markAssigned(id: string) {
+    const { error } = await this.db
+      .from("incidents")
+      .update({ status: "assigned" })
+      .eq("id", id);
+    if (error) throw error;
   }
 }
