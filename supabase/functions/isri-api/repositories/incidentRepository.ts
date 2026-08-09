@@ -118,4 +118,12 @@ export class IncidentRepository {
       .eq("id", id);
     if (error) throw error;
   }
+
+  async updateStatus(id: string, status: string) {
+    const { error } = await this.db
+      .from("incidents")
+      .update({ status })
+      .eq("id", id);
+    if (error) throw error;
+  }
 }

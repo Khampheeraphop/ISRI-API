@@ -60,6 +60,18 @@ export class ProfileRepository {
     return data as Profile[];
   }
 
+  async namesByIds(ids: string[]) {
+    if (!ids.length) return new Map<string, string>();
+    const { data, error } = await this.db
+      .from("profiles")
+      .select("id, full_name")
+      .in("id", [...new Set(ids)]);
+    if (error) throw error;
+    return new Map(
+      (data ?? []).map((profile) => [profile.id, profile.full_name]),
+    );
+  }
+
   async setApproval(input: {
     id: string;
     approvalStatus: Extract<ApprovalStatus, "approved" | "rejected">;

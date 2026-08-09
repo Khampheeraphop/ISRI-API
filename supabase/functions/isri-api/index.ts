@@ -24,9 +24,11 @@ import { IncidentRepository } from "./repositories/incidentRepository.ts";
 import {
   FileRepository,
   type IncidentAttachment,
+  type WorkOrderAttachment,
 } from "./repositories/fileRepository.ts";
 import { NotificationRepository } from "./repositories/notificationRepository.ts";
 import { WorkOrderRepository } from "./repositories/workOrderRepository.ts";
+import { validateWorkOrderAction } from "./services/workOrderWorkflowService.ts";
 
 async function requireSession(req: Request) {
   const supabaseUrl = Deno.env.get("SUPABASE_URL");
@@ -98,6 +100,55 @@ Deno.serve(async (req) => {
     const notifications = new NotificationRepository(db);
     const workOrders = new WorkOrderRepository(db);
 
+    const historyWithActors = async (incidentId: string) => {
+      const history = await workOrders.historyForIncident(incidentId);
+      const names = await profiles.namesByIds(
+        history.events.flatMap((event) =>
+          event.changed_by ? [event.changed_by] : [],
+        ),
+      );
+      const eventIds = history.events.map((event) => event.id);
+      const { data: linkedFiles, error: linkedFilesError } = eventIds.length
+        ? await db
+            .from("work_order_history_files")
+            .select(
+              "work_order_history_id, files(id, bucket, object_path, file_name, mime_type, size_bytes)",
+            )
+            .in("work_order_history_id", eventIds)
+        : { data: [], error: null };
+      if (linkedFilesError) throw linkedFilesError;
+      const filesByEvent = new Map<string, Array<Record<string, unknown>>>();
+      for (const link of linkedFiles ?? []) {
+        const related = link.files as unknown as Record<string, unknown> | null;
+        if (!related) continue;
+        const current = filesByEvent.get(link.work_order_history_id) ?? [];
+        current.push(related);
+        filesByEvent.set(link.work_order_history_id, current);
+      }
+      return {
+        workOrder: history.workOrder,
+        events: await Promise.all(
+          history.events.map(async (event) => ({
+            ...event,
+            changed_by_name: event.changed_by
+              ? (names.get(event.changed_by) ?? "ผู้ใช้งานระบบ")
+              : "ระบบ",
+            attachments: await Promise.all(
+              (filesByEvent.get(event.id) ?? []).map(async (file) => ({
+                fileName: String(file.file_name),
+                mimeType: String(file.mime_type),
+                sizeBytes: Number(file.size_bytes),
+                url: await files.createSignedReadUrl(
+                  String(file.bucket),
+                  String(file.object_path),
+                ),
+              })),
+            ),
+          })),
+        ),
+      };
+    };
+
     if (req.method === "GET" && pathname === "/me")
       return json({ data: profile });
 
@@ -105,11 +156,17 @@ Deno.serve(async (req) => {
       requireApproved(profile);
       return json({ data: await notifications.listForUser(profile.id) });
     }
-    const notificationMatch = pathname.match(/^\/notifications\/([0-9a-f-]{36})\/read$/i);
+    const notificationMatch = pathname.match(
+      /^\/notifications\/([0-9a-f-]{36})\/read$/i,
+    );
     if (req.method === "PATCH" && notificationMatch) {
       requireApproved(profile);
-      const notification = await notifications.markRead(notificationMatch[1], profile.id);
-      if (!notification) throw new HttpError("Notification was not found.", 404);
+      const notification = await notifications.markRead(
+        notificationMatch[1],
+        profile.id,
+      );
+      if (!notification)
+        throw new HttpError("Notification was not found.", 404);
       return json({ data: notification });
     }
 
@@ -201,8 +258,34 @@ Deno.serve(async (req) => {
       }
     }
 
+    if (
+      req.method === "POST" &&
+      pathname === "/uploads/work-order-attachments"
+    ) {
+      if (!isApproved(profile) || profile.role !== "technician")
+        throw new HttpError(
+          "Only approved technicians can upload work order attachments.",
+          403,
+        );
+      const body = await parseJson(req);
+      try {
+        return json({
+          data: await files.createWorkOrderUpload({
+            userId: profile.id,
+            fileName: typeof body?.fileName === "string" ? body.fileName : "",
+            mimeType: typeof body?.mimeType === "string" ? body.mimeType : "",
+            sizeBytes: typeof body?.sizeBytes === "number" ? body.sizeBytes : 0,
+          }),
+        });
+      } catch (cause) {
+        if (cause instanceof Error) throw new HttpError(cause.message);
+        throw cause;
+      }
+    }
+
     if (req.method === "GET" && pathname === "/incidents/mine") {
-      requireApproved(profile);
+      if (!isApproved(profile) || profile.role !== "reporter")
+        throw new HttpError("Reporter access is required.", 403);
       return json({ data: await incidents.listForReporter(profile.id) });
     }
     if (req.method === "GET" && pathname === "/dispatch/incidents") {
@@ -212,6 +295,15 @@ Deno.serve(async (req) => {
     if (req.method === "GET" && pathname === "/dispatch/technicians") {
       requireDispatcher(profile);
       return json({ data: await profiles.listApprovedByRole("technician") });
+    }
+    if (req.method === "GET" && pathname === "/dispatch/reviews") {
+      requireDispatcher(profile);
+      return json({
+        data: await workOrders.listReviewForActor(
+          profile.id,
+          profile.role === "admin" ? "admin" : "dispatcher",
+        ),
+      });
     }
     if (req.method === "POST" && pathname === "/dispatch/work-orders") {
       requireDispatcher(profile);
@@ -246,7 +338,109 @@ Deno.serve(async (req) => {
         201,
       );
     }
+    if (req.method === "GET" && pathname === "/work-orders/mine") {
+      if (!isApproved(profile) || profile.role !== "technician")
+        throw new HttpError("Technician access is required.", 403);
+      return json({ data: await workOrders.listForTechnician(profile.id) });
+    }
+    const workOrderDetailMatch = pathname.match(
+      /^\/work-orders\/([0-9a-f-]{36})$/i,
+    );
+    if (req.method === "GET" && workOrderDetailMatch) {
+      if (
+        !isApproved(profile) ||
+        !["technician", "dispatcher", "admin"].includes(profile.role ?? "")
+      )
+        throw new HttpError("Work order access is required.", 403);
+      const actorRole = profile.role as "technician" | "dispatcher" | "admin";
+      const workOrder = await workOrders.getByIdForActor(
+        workOrderDetailMatch[1],
+        profile.id,
+        actorRole,
+      );
+      if (!workOrder) throw new HttpError("Work order was not found.", 404);
+      return json({
+        data: {
+          ...(await historyWithActors(workOrder.incident_id)),
+          workOrder,
+        },
+      });
+    }
+    const workOrderActionMatch = pathname.match(
+      /^\/work-orders\/([0-9a-f-]{36})\/actions$/i,
+    );
+    if (req.method === "POST" && workOrderActionMatch) {
+      const body = await parseJson(req);
+      const actorRole =
+        profile.role === "technician" ||
+        profile.role === "dispatcher" ||
+        profile.role === "admin"
+          ? profile.role
+          : null;
+      if (!isApproved(profile) || !actorRole)
+        throw new HttpError("Work order access is required.", 403);
+      const workOrder = await workOrders.getForAction(
+        workOrderActionMatch[1],
+        profile.id,
+        actorRole,
+      );
+      if (!workOrder) throw new HttpError("Work order was not found.", 404);
+      const action = validateWorkOrderAction({
+        action: body?.action,
+        actorRole: actorRole === "technician" ? "technician" : "dispatcher",
+        currentStatus: workOrder.status,
+        note: body?.note,
+      });
+      const attachments = Array.isArray(body?.attachments)
+        ? body.attachments
+        : [];
+      if (
+        attachments.length > 3 ||
+        !attachments.every((file: unknown) =>
+          FileRepository.validateWorkOrderAttachment(file, profile.id),
+        )
+      )
+        throw new HttpError("Work order attachments are invalid.");
+      if (
+        attachments.length &&
+        !["request_parts", "submit_repair"].includes(action.action)
+      )
+        throw new HttpError(
+          "Attachments are only accepted with a parts request or repair submission.",
+        );
+      const result = await workOrders.applyAction(workOrder.id, {
+        status: action.transition.to,
+        actorId: profile.id,
+        note: action.note,
+        eventType: action.transition.eventType,
+      });
+      if (attachments.length)
+        await files.linkWorkOrderAttachments({
+          workOrderId: result.id,
+          historyId: result.historyId,
+          userId: profile.id,
+          attachments: attachments as WorkOrderAttachment[],
+        });
+      await incidents.updateStatus(
+        result.incident_id,
+        action.transition.incidentStatus,
+      );
+      return json({ data: result });
+    }
     const incidentMatch = pathname.match(/^\/incidents\/([0-9a-f-]{36})$/i);
+    const incidentHistoryMatch = pathname.match(
+      /^\/incidents\/([0-9a-f-]{36})\/history$/i,
+    );
+    if (req.method === "GET" && incidentHistoryMatch) {
+      if (!isApproved(profile) || profile.role !== "reporter")
+        throw new HttpError("Reporter access is required.", 403);
+      const incident = await incidents.findForReporter(
+        incidentHistoryMatch[1],
+        profile.id,
+      );
+      if (!incident) throw new HttpError("Incident was not found.", 404);
+      return json({ data: await historyWithActors(incidentHistoryMatch[1]) });
+    }
     if (req.method === "GET" && incidentMatch) {
       if (!isApproved(profile) || profile.role !== "reporter")
         throw new HttpError("Reporter access is required.", 403);
@@ -257,15 +451,30 @@ Deno.serve(async (req) => {
       if (!detail) throw new HttpError("Incident was not found.", 404);
       const linkedFiles = (
         detail.fileLinks as unknown as Array<{
-          files: Array<{
-            bucket: string;
-            object_path: string;
-            file_name: string;
-            mime_type: string;
-            size_bytes: number;
-          }>;
+          files:
+            | {
+                bucket: string;
+                object_path: string;
+                file_name: string;
+                mime_type: string;
+                size_bytes: number;
+              }
+            | Array<{
+                bucket: string;
+                object_path: string;
+                file_name: string;
+                mime_type: string;
+                size_bytes: number;
+              }>
+            | null;
         }>
-      ).flatMap((link) => link.files);
+      ).flatMap((link) =>
+        !link.files
+          ? []
+          : Array.isArray(link.files)
+            ? link.files
+            : [link.files],
+      );
       const attachments = await Promise.all(
         linkedFiles.map(async (file) => ({
           fileName: file.file_name,

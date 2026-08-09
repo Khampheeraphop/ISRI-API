@@ -56,31 +56,110 @@ export class WorkOrderRepository {
   }
 
   async listForTechnician(technicianId: string) {
-    const { data, error } = await this.db.from("work_orders")
-      .select("id, incident_id, status, respond_due_at, resolve_due_at, assigned_at, incidents(ticket_number, location_label, asset_name, category, urgency_reported, description, status)")
+    const { data, error } = await this.db
+      .from("work_orders")
+      .select(
+        "id, incident_id, status, respond_due_at, resolve_due_at, assigned_at, incidents(ticket_number, location_label, asset_name, category, urgency_reported, description, status)",
+      )
       .eq("technician_id", technicianId)
       .order("resolve_due_at");
     if (error) throw error;
     return data;
   }
 
-  async changeStatus(id: string, technicianId: string, status: "in_progress" | "waiting_parts" | "done", note: string | null) {
-    const { data, error } = await this.db.from("work_orders")
-      .update({ status })
-      .eq("id", id)
-      .eq("technician_id", technicianId)
-      .select("id, incident_id, status")
-      .maybeSingle();
+  async getForAction(
+    id: string,
+    actorId: string,
+    actorRole: "technician" | "dispatcher" | "admin",
+  ) {
+    let query = this.db
+      .from("work_orders")
+      .select("id, incident_id, status, technician_id, assigned_by")
+      .eq("id", id);
+    if (actorRole === "technician") query = query.eq("technician_id", actorId);
+    if (actorRole === "dispatcher") query = query.eq("assigned_by", actorId);
+    const { data, error } = await query.maybeSingle();
     if (error) throw error;
-    if (!data) return null;
-    const { error: historyError } = await this.db.from("work_order_history").insert({
-      work_order_id: id,
-      status,
-      changed_by: technicianId,
-      note,
-      event_type: status === "waiting_parts" ? "parts_requested" : status === "done" ? "completion" : "status_change",
-    });
-    if (historyError) throw historyError;
     return data;
+  }
+
+  async applyAction(
+    id: string,
+    input: {
+      status: string;
+      actorId: string;
+      note: string | null;
+      eventType: string;
+    },
+  ) {
+    const { data, error } = await this.db
+      .from("work_orders")
+      .update({ status: input.status })
+      .eq("id", id)
+      .select("id, incident_id, status")
+      .single();
+    if (error) throw error;
+    const { data: history, error: historyError } = await this.db
+      .from("work_order_history")
+      .insert({
+        work_order_id: id,
+        status: input.status,
+        changed_by: input.actorId,
+        note: input.note,
+        event_type: input.eventType,
+      })
+      .select("id")
+      .single();
+    if (historyError) throw historyError;
+    return { ...data, historyId: history.id };
+  }
+
+  async historyForIncident(incidentId: string) {
+    const { data: order, error: orderError } = await this.db
+      .from("work_orders")
+      .select("id, technician_id, assigned_by, assigned_at, status")
+      .eq("incident_id", incidentId)
+      .maybeSingle();
+    if (orderError) throw orderError;
+    if (!order) return { workOrder: null, events: [] };
+    const { data: events, error: eventsError } = await this.db
+      .from("work_order_history")
+      .select("id, status, changed_by, changed_at, note, event_type, metadata")
+      .eq("work_order_id", order.id)
+      .order("changed_at");
+    if (eventsError) throw eventsError;
+    return { workOrder: order, events: events ?? [] };
+  }
+
+  async getByIdForActor(
+    id: string,
+    actorId: string,
+    actorRole: "technician" | "dispatcher" | "admin",
+  ) {
+    let query = this.db
+      .from("work_orders")
+      .select(
+        "id, incident_id, technician_id, assigned_by, assigned_at, status, respond_due_at, resolve_due_at, created_at, incidents(ticket_number, location_label, asset_name, category, urgency_reported, description, status)",
+      )
+      .eq("id", id);
+    if (actorRole === "technician") query = query.eq("technician_id", actorId);
+    if (actorRole === "dispatcher") query = query.eq("assigned_by", actorId);
+    const { data, error } = await query.maybeSingle();
+    if (error) throw error;
+    return data;
+  }
+
+  async listReviewForActor(actorId: string, actorRole: "dispatcher" | "admin") {
+    let query = this.db
+      .from("work_orders")
+      .select(
+        "id, incident_id, technician_id, assigned_by, assigned_at, status, respond_due_at, resolve_due_at, incidents(ticket_number, location_label, asset_name, category, urgency_reported, description, status)",
+      )
+      .in("status", ["pending_parts_approval", "pending_repair_approval"])
+      .order("resolve_due_at");
+    if (actorRole === "dispatcher") query = query.eq("assigned_by", actorId);
+    const { data, error } = await query;
+    if (error) throw error;
+    return data ?? [];
   }
 }

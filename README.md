@@ -6,11 +6,31 @@ The production backend is implemented as Supabase Edge Functions, kept separatel
 - PostgreSQL schema, row-level security, storage buckets, and migrations are managed in the Supabase project.
 - The browser uses only the publishable Supabase key. Service-role credentials remain inside Edge Functions.
 
-The first API module covers the Google-authenticated profile, onboarding, approval flow, locations, and incident creation. It now includes:
+The API covers the Google-authenticated profile, onboarding, approval flow, locations, incident creation, and repair workflow. It includes:
 
 - administrator-only location create, update, delete, and QR lookup;
 - private `incident-attachments` uploads through one-time signed upload URLs;
 - file metadata recorded in `files` and linked with `incident_files` only after an incident is created;
 - reporter-only incident list and detail endpoints, with short-lived signed read URLs for attachments.
+- Dispatcher/Admin assignment with SLA response and resolution deadlines taken from `sla_rules`.
+- Technician-only, button-driven workflow: accept work, request parts, confirm parts received, and submit repair.
+- Dispatcher/Admin review workflow: approve parts, approve repair, or return work for correction.
+- Two-tab history endpoints for reporters and technicians, including actor names, notes, and signed image URLs.
+- private `work-order-attachments` uploads (JPG/PNG, maximum 3 MB per image) linked to the exact history entry.
+- notifications for assignment, review requests, parts approval, returned work, and completed repairs.
 
-Further modules will migrate work orders, PM, rewards, and campaigns from the temporary client-side store.
+## Local checks
+
+```powershell
+cd C:\Users\poplo\Desktop\ISRI\api
+.\.tools\deno.exe task check
+```
+
+## Workflow acceptance path
+
+1. Sign in three Google accounts and have the administrator approve them as Reporter, Technician, and Dispatcher (an Admin can also act as Dispatcher).
+2. Reporter scans a registered QR location and creates an incident.
+3. Dispatcher assigns it to the Technician; the SLA deadlines are created with the work order.
+4. Technician accepts the work, requests parts if needed, then submits the repair result with notes/photos.
+5. Dispatcher approves parts and the repair result, or returns the repair for correction.
+6. Verify the Reporter sees only their incident, the Technician sees only their work order, and all actions appear in each timeline.
