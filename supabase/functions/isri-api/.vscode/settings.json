@@ -1,0 +1,6 @@
+{
+  "deno.enable": true,
+  "deno.config": "${workspaceFolder}/deno.json",
+  "deno.path": "${workspaceFolder}/../../../.tools/deno.exe",
+  "typescript.tsserver.experimental.enableProjectDiagnostics": false
+}

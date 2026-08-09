@@ -1,0 +1,6 @@
+{
+  "tasks": {
+    "check": "deno check supabase/functions/isri-api/index.ts",
+    "test": "deno test --allow-env=WEB_ORIGIN --no-check tests"
+  }
+}
