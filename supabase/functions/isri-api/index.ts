@@ -655,6 +655,51 @@ Deno.serve(async (req) => {
       requireDispatcher(profile);
       return json({ data: await incidents.listPendingAssignment() });
     }
+    const dispatchIncidentDetailMatch = pathname.match(
+      /^\/dispatch\/incidents\/([0-9a-f-]{36})$/i,
+    );
+    if (req.method === "GET" && dispatchIncidentDetailMatch) {
+      requireDispatcher(profile);
+      const detail = await incidents.findForDispatchDetail(
+        dispatchIncidentDetailMatch[1],
+      );
+      if (!detail) throw new HttpError("Incident was not found.", 404);
+      const linkedFiles = (
+        detail.fileLinks as unknown as Array<{
+          files:
+            | {
+                bucket: string;
+                object_path: string;
+                file_name: string;
+                mime_type: string;
+                size_bytes: number;
+              }
+            | Array<{
+                bucket: string;
+                object_path: string;
+                file_name: string;
+                mime_type: string;
+                size_bytes: number;
+              }>
+            | null;
+        }>
+      ).flatMap((link) =>
+        !link.files
+          ? []
+          : Array.isArray(link.files)
+            ? link.files
+            : [link.files],
+      );
+      const attachments = await Promise.all(
+        linkedFiles.map(async (file) => ({
+          fileName: file.file_name,
+          mimeType: file.mime_type,
+          sizeBytes: file.size_bytes,
+          url: await files.createSignedReadUrl(file.bucket, file.object_path),
+        })),
+      );
+      return json({ data: { ...detail.incident, attachments } });
+    }
     if (req.method === "GET" && pathname === "/dispatch/technicians") {
       requireDispatcher(profile);
       return json({ data: await profiles.listApprovedByRole("technician") });

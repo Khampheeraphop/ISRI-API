@@ -99,6 +99,27 @@ export class IncidentRepository {
     return data;
   }
 
+  async findForDispatchDetail(id: string) {
+    const { data: incident, error: incidentError } = await this.db
+      .from("incidents")
+      .select(
+        "id, ticket_number, location_id, location_label, asset_name, category, urgency_reported, description, status, created_at, updated_at",
+      )
+      .eq("id", id)
+      .eq("status", "pending_assignment")
+      .maybeSingle();
+    if (incidentError) throw incidentError;
+    if (!incident) return null;
+    const { data: fileLinks, error: filesError } = await this.db
+      .from("incident_files")
+      .select(
+        "files(id, bucket, object_path, file_name, mime_type, size_bytes)",
+      )
+      .eq("incident_id", id);
+    if (filesError) throw filesError;
+    return { incident, fileLinks: fileLinks ?? [] };
+  }
+
   async listPendingAssignment() {
     const { data, error } = await this.db
       .from("incidents")
