@@ -75,10 +75,7 @@ function requireAdmin(profile: Profile) {
 }
 
 function requireDispatcher(profile: Profile) {
-  if (
-    !isApproved(profile) ||
-    (profile.role !== "dispatcher" && profile.role !== "admin")
-  )
+  if (!isApproved(profile) || profile.role !== "dispatcher")
     throw new HttpError("Dispatcher access is required.", 403);
 }
 
@@ -232,11 +229,12 @@ Deno.serve(async (req) => {
 
     const historyWithActors = async (incidentId: string) => {
       const history = await workOrders.historyForIncident(incidentId);
-      const names = await profiles.namesByIds(
-        history.events.flatMap((event) =>
-          event.changed_by ? [event.changed_by] : [],
-        ),
+      const actorIds = history.events.flatMap((event) =>
+        event.changed_by ? [event.changed_by] : [],
       );
+      if (history.workOrder?.technician_id)
+        actorIds.push(history.workOrder.technician_id);
+      const names = await profiles.namesByIds(actorIds);
       const eventIds = history.events.map((event) => event.id);
       const { data: linkedFiles, error: linkedFilesError } = eventIds.length
         ? await db
@@ -256,7 +254,14 @@ Deno.serve(async (req) => {
         filesByEvent.set(link.work_order_history_id, current);
       }
       return {
-        workOrder: history.workOrder,
+        workOrder: history.workOrder
+          ? {
+              ...history.workOrder,
+              technician_name: history.workOrder.technician_id
+                ? (names.get(history.workOrder.technician_id) ?? "ไม่ระบุ")
+                : null,
+            }
+          : null,
         events: await Promise.all(
           history.events.map(async (event) => ({
             ...event,
@@ -284,11 +289,17 @@ Deno.serve(async (req) => {
 
     if (req.method === "GET" && pathname === "/dashboard/summary") {
       requireAdmin(profile);
-      const requestedDays = Number(url.searchParams.get("days") ?? "30");
-      const days = [30, 90, 180, 365].includes(requestedDays)
-        ? requestedDays
-        : 30;
-      return json({ data: await dashboard.summary(days) });
+      const month = url.searchParams.get("month") ?? "";
+      if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month))
+        throw new HttpError("Dashboard month is invalid.");
+      return json({ data: await dashboard.summary(month) });
+    }
+    if (req.method === "GET" && pathname === "/dashboard/reporting-rate") {
+      requireAdmin(profile);
+      const month = url.searchParams.get("month") ?? "";
+      if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month))
+        throw new HttpError("Dashboard month is invalid.");
+      return json({ data: await dashboard.getMonthlyReportingCounts(month) });
     }
 
     if (req.method === "GET" && pathname === "/sla/rules") {
@@ -773,10 +784,10 @@ Deno.serve(async (req) => {
     if (req.method === "GET" && workOrderDetailMatch) {
       if (
         !isApproved(profile) ||
-        !["technician", "dispatcher", "admin"].includes(profile.role ?? "")
+        !["technician", "dispatcher"].includes(profile.role ?? "")
       )
         throw new HttpError("Work order access is required.", 403);
-      const actorRole = profile.role as "technician" | "dispatcher" | "admin";
+      const actorRole = profile.role as "technician" | "dispatcher";
       const workOrder = await workOrders.getByIdForActor(
         workOrderDetailMatch[1],
         profile.id,
@@ -797,8 +808,7 @@ Deno.serve(async (req) => {
       const body = await parseJson(req);
       const actorRole =
         profile.role === "technician" ||
-        profile.role === "dispatcher" ||
-        profile.role === "admin"
+        profile.role === "dispatcher"
           ? profile.role
           : null;
       if (!isApproved(profile) || !actorRole)
