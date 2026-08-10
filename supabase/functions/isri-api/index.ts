@@ -95,6 +95,15 @@ function requireTechnician(profile: Profile) {
     throw new HttpError("Technician access is required.", 403);
 }
 
+function hasDatabaseCode(cause: unknown, code: string) {
+  return (
+    typeof cause === "object" &&
+    cause !== null &&
+    "code" in cause &&
+    (cause as { code?: unknown }).code === code
+  );
+}
+
 function locationInput(body: Record<string, unknown> | null) {
   const text = (key: string, required = true) => {
     const value = typeof body?.[key] === "string" ? body[key].trim() : "";
@@ -571,7 +580,14 @@ Deno.serve(async (req) => {
         decodeURIComponent(pathname.slice("/locations/code/".length)),
       );
       if (!location) throw new HttpError("Location was not found.", 404);
-      return json({ data: location });
+      return json({
+        data: {
+          ...location,
+          is_reporting_locked: Boolean(
+            await incidents.findActiveForLocation(location.id),
+          ),
+        },
+      });
     }
 
     if (req.method === "POST" && pathname === "/admin/locations") {
@@ -938,18 +954,34 @@ Deno.serve(async (req) => {
         throw new HttpError("Incident attachments are invalid.");
       const location = await locations.findById(locationId);
       if (!location) throw new HttpError("Location was not found.", 404);
+      if (await incidents.findActiveForLocation(locationId))
+        throw new HttpError(
+          "This QR location already has an incident in progress.",
+          409,
+        );
       return json(
         {
-          data: await incidents.create({
-            locationId,
-            locationLabel: `${location.building} · ${location.floor} · ${location.zone}`,
-            assetName,
-            category,
-            urgencyReported,
-            description,
-            reporterId: profile.id,
-            attachments: attachments as IncidentAttachment[],
-          }),
+          data: await (async () => {
+            try {
+              return await incidents.create({
+                locationId,
+                locationLabel: `${location.building} · ${location.floor} · ${location.zone}`,
+                assetName,
+                category,
+                urgencyReported,
+                description,
+                reporterId: profile.id,
+                attachments: attachments as IncidentAttachment[],
+              });
+            } catch (cause) {
+              if (hasDatabaseCode(cause, "23505"))
+                throw new HttpError(
+                  "This QR location already has an incident in progress.",
+                  409,
+                );
+              throw cause;
+            }
+          })(),
         },
         201,
       );

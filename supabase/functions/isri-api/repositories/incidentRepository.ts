@@ -132,6 +132,25 @@ export class IncidentRepository {
     return data;
   }
 
+  async findActiveForLocation(locationId: string) {
+    const { data, error } = await this.db
+      .from("incidents")
+      .select("id")
+      .eq("location_id", locationId)
+      .in("status", [
+        "pending_assignment",
+        "assigned",
+        "in_progress",
+        "pending_parts_approval",
+        "waiting_parts",
+        "pending_repair_approval",
+      ])
+      .limit(1)
+      .maybeSingle();
+    if (error) throw error;
+    return data;
+  }
+
   async markAssigned(id: string) {
     const { error } = await this.db
       .from("incidents")
