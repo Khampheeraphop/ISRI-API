@@ -30,6 +30,15 @@ type HistoryRow = {
 
 type TechnicianRow = { id: string; full_name: string };
 
+type IncidentTimestampRow = { id: string; created_at: string };
+
+type PmScheduleRow = {
+  id: string;
+  location_label: string;
+  asset_name: string;
+  next_due_at: string;
+};
+
 const activeWorkOrderStatuses = new Set([
   "pending",
   "in_progress",
@@ -100,6 +109,8 @@ export class DashboardRepository {
 
   async summary(periodMonth: string) {
     const now = new Date();
+    const pmDueSoonUntil = new Date(now);
+    pmDueSoonUntil.setUTCDate(pmDueSoonUntil.getUTCDate() + 30);
     const [year, month] = periodMonth.split("-").map(Number);
     const since = new Date(Date.UTC(year, month - 1, 1));
     const until = new Date(Date.UTC(year, month, 1));
@@ -116,6 +127,9 @@ export class DashboardRepository {
       rewardRedemptionsResult,
       activeRewardsResult,
       activeCampaignsResult,
+      pmSchedulesResult,
+      overduePmCountResult,
+      dueSoonPmCountResult,
     ] = await Promise.all([
       this.db
         .from("incidents")
@@ -168,6 +182,21 @@ export class DashboardRepository {
         .lt("redeemed_at", until.toISOString()),
       this.db.from("reward_items").select("id").eq("is_active", true),
       this.db.from("reward_campaigns").select("id").eq("status", "active"),
+      this.db
+        .from("pm_schedules")
+        .select("id, location_label, asset_name, next_due_at")
+        .lte("next_due_at", pmDueSoonUntil.toISOString())
+        .order("next_due_at")
+        .limit(5),
+      this.db
+        .from("pm_schedules")
+        .select("id", { count: "exact", head: true })
+        .lt("next_due_at", now.toISOString()),
+      this.db
+        .from("pm_schedules")
+        .select("id", { count: "exact", head: true })
+        .gte("next_due_at", now.toISOString())
+        .lte("next_due_at", pmDueSoonUntil.toISOString()),
     ]);
 
     for (const result of [
@@ -182,6 +211,9 @@ export class DashboardRepository {
       rewardRedemptionsResult,
       activeRewardsResult,
       activeCampaignsResult,
+      pmSchedulesResult,
+      overduePmCountResult,
+      dueSoonPmCountResult,
     ]) {
       if (result.error) throw result.error;
     }
@@ -194,6 +226,7 @@ export class DashboardRepository {
       []) as WorkOrderRow[];
     const recentHistory = (recentHistoryResult.data ?? []) as HistoryRow[];
     const technicians = (techniciansResult.data ?? []) as TechnicianRow[];
+    const pmSchedules = (pmSchedulesResult.data ?? []) as PmScheduleRow[];
     const totalWalletPoints = (pointWalletsResult.data ?? []).reduce(
       (sum, wallet) => sum + Number(wallet.balance),
       0,
@@ -231,8 +264,23 @@ export class DashboardRepository {
     if (recentOrderHistoryResult.error) throw recentOrderHistoryResult.error;
 
     const recentOrders = (recentOrdersResult.data ?? []) as WorkOrderRow[];
+    const recentIncidentIds = [
+      ...new Set(recentOrders.map((order) => order.incident_id)),
+    ];
+    const recentIncidentsResult = recentIncidentIds.length
+      ? await this.db
+          .from("incidents")
+          .select("id, created_at")
+          .in("id", recentIncidentIds)
+      : { data: [], error: null };
+    if (recentIncidentsResult.error) throw recentIncidentsResult.error;
     const fullRecentOrderHistory = (recentOrderHistoryResult.data ??
       []) as HistoryRow[];
+    const recentIncidentCreatedAt = new Map(
+      ((recentIncidentsResult.data ?? []) as IncidentTimestampRow[]).map(
+        (incident) => [incident.id, incident.created_at],
+      ),
+    );
     const historyByWorkOrder = new Map<string, HistoryRow[]>();
     for (const event of fullRecentOrderHistory) {
       const events = historyByWorkOrder.get(event.work_order_id) ?? [];
@@ -263,10 +311,22 @@ export class DashboardRepository {
         (event) => event.status === "done",
       )?.changed_at;
     const responded = recentOrders
-      .map((order) => ({ order, occurredAt: acceptedAt(order) }))
+      .map((order) => ({
+        order,
+        occurredAt: acceptedAt(order),
+        incidentCreatedAt: recentIncidentCreatedAt.get(order.incident_id),
+      }))
       .filter(
-        (item): item is { order: WorkOrderRow; occurredAt: string } =>
-          item.occurredAt !== undefined && new Date(item.occurredAt) >= since,
+        (
+          item,
+        ): item is {
+          order: WorkOrderRow;
+          occurredAt: string;
+          incidentCreatedAt: string;
+        } =>
+          item.occurredAt !== undefined &&
+          item.incidentCreatedAt !== undefined &&
+          new Date(item.occurredAt) >= since,
       );
     const completed = recentOrders
       .map((order) => ({ order, occurredAt: completedAt(order) }))
@@ -278,11 +338,23 @@ export class DashboardRepository {
       ({ order, occurredAt }) =>
         new Date(occurredAt) <= new Date(order.respond_due_at),
     ).length;
+    const averageResponseMinutes = responded.length
+      ? Math.round(
+          responded.reduce(
+            (sum, { occurredAt, incidentCreatedAt }) =>
+              sum +
+              (new Date(occurredAt).getTime() -
+                new Date(incidentCreatedAt).getTime()) /
+                60000,
+            0,
+          ) / responded.length,
+        )
+      : null;
     const resolutionOnTime = completed.filter(
       ({ order, occurredAt }) =>
         new Date(occurredAt) <= new Date(order.resolve_due_at),
     ).length;
-    const averageResolutionMinutes = completed.length
+    const averageClosureMinutes = completed.length
       ? Math.round(
           completed.reduce(
             (sum, { order, occurredAt }) =>
@@ -336,10 +408,11 @@ export class DashboardRepository {
         responseOnTimeRate: responded.length
           ? Math.round((responseOnTime / responded.length) * 100)
           : null,
+        averageResponseMinutes,
         resolutionOnTimeRate: completed.length
           ? Math.round((resolutionOnTime / completed.length) * 100)
           : null,
-        averageResolutionMinutes,
+        averageClosureMinutes,
       },
       statusCounts: Object.entries(
         incidents.reduce<Record<string, number>>((counts, incident) => {
@@ -348,11 +421,23 @@ export class DashboardRepository {
         }, {}),
       ).map(([status, count]) => ({ status, count })),
       hotspots: [...hotspotMap.values()]
+        .filter((item) => item.count >= 2)
         .sort(
           (left, right) =>
             right.count - left.count || right.openCount - left.openCount,
         )
         .slice(0, 5),
+      pm: {
+        overdueCount: overduePmCountResult.count ?? 0,
+        dueSoonCount: dueSoonPmCountResult.count ?? 0,
+        items: pmSchedules.map((schedule) => ({
+          id: schedule.id,
+          locationLabel: schedule.location_label,
+          assetName: schedule.asset_name,
+          nextDueAt: schedule.next_due_at,
+          state: new Date(schedule.next_due_at) < now ? "overdue" : "due_soon",
+        })),
+      },
       technicianWorkload: technicians
         .map((technician) => ({
           technicianId: technician.id,
