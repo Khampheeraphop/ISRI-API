@@ -18,7 +18,7 @@ export class RewardRepository {
   }
 
   async listWallet(userId: string) {
-    const [wallet, transactions] = await Promise.all([
+    const [wallet, transactions, redemptions] = await Promise.all([
       this.db
         .from("point_wallets")
         .select("balance")
@@ -31,19 +31,70 @@ export class RewardRepository {
         )
         .eq("user_id", userId)
         .order("created_at", { ascending: false }),
+      this.db
+        .from("reward_redemptions")
+        .select(
+          "id, reward_item_id, status, fulfillment_method, recipient_name, phone, delivery_address, requester_note, admin_note, redeemed_at, fulfilled_at, cancelled_at, reward_items(name, point_cost)",
+        )
+        .eq("user_id", userId)
+        .order("redeemed_at", { ascending: false }),
     ]);
     if (wallet.error) throw wallet.error;
     if (transactions.error) throw transactions.error;
+    if (redemptions.error) throw redemptions.error;
     return {
       balance: wallet.data?.balance ?? 0,
       transactions: transactions.data ?? [],
+      redemptions: redemptions.data ?? [],
     };
   }
 
-  async redeem(userId: string, rewardItemId: string) {
+  async redeem(
+    userId: string,
+    input: {
+      rewardItemId: string;
+      fulfillmentMethod: "pickup" | "delivery";
+      recipientName: string;
+      phone: string;
+      deliveryAddress: string | null;
+      requesterNote: string | null;
+    },
+  ) {
     const { data, error } = await this.db.rpc("redeem_reward", {
       p_user_id: userId,
-      p_reward_item_id: rewardItemId,
+      p_reward_item_id: input.rewardItemId,
+      p_fulfillment_method: input.fulfillmentMethod,
+      p_recipient_name: input.recipientName,
+      p_phone: input.phone,
+      p_delivery_address: input.deliveryAddress,
+      p_requester_note: input.requesterNote,
+    });
+    if (error) throw error;
+    return data;
+  }
+
+  async listRedemptions() {
+    const { data, error } = await this.db
+      .from("reward_redemptions")
+      .select(
+        "id, user_id, reward_item_id, status, fulfillment_method, recipient_name, phone, delivery_address, requester_note, admin_note, redeemed_at, fulfilled_at, cancelled_at, profiles!reward_redemptions_user_id_fkey(full_name, email), reward_items(name, point_cost)",
+      )
+      .order("redeemed_at", { ascending: false });
+    if (error) throw error;
+    return data ?? [];
+  }
+
+  async updateRedemptionStatus(input: {
+    id: string;
+    status: "fulfilled" | "cancelled";
+    actorId: string;
+    note: string | null;
+  }) {
+    const { data, error } = await this.db.rpc("set_reward_redemption_status", {
+      p_redemption_id: input.id,
+      p_status: input.status,
+      p_actor_id: input.actorId,
+      p_admin_note: input.note,
     });
     if (error) throw error;
     return data;

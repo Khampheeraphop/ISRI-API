@@ -41,6 +41,7 @@ import {
   PmScheduleService,
   parsePmScheduleInput,
 } from "./services/pmScheduleService.ts";
+import { validateFulfillment } from "./_shared/rewardRules.ts";
 
 async function requireSession(req: Request) {
   const supabaseUrl = Deno.env.get("SUPABASE_URL");
@@ -294,7 +295,11 @@ Deno.serve(async (req) => {
         throw new HttpError("Dashboard month is invalid.");
       return json({ data: await dashboard.summary(month) });
     }
-    if (req.method === "GET" && pathname === "/dashboard/reporting-rate") {
+    if (
+      req.method === "GET" &&
+      (pathname === "/dashboard/reporting-counts" ||
+        pathname === "/dashboard/reporting-rate")
+    ) {
       requireAdmin(profile);
       const month = url.searchParams.get("month") ?? "";
       if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month))
@@ -397,10 +402,61 @@ Deno.serve(async (req) => {
         typeof body?.rewardItemId === "string" ? body.rewardItemId : "";
       if (!/^[0-9a-f-]{36}$/i.test(rewardItemId))
         throw new HttpError("Reward item is invalid.");
+      let fulfillment;
+      try {
+        fulfillment = validateFulfillment({
+          method: body?.fulfillmentMethod,
+          recipientName: body?.recipientName,
+          phone: body?.phone,
+          deliveryAddress: body?.deliveryAddress,
+          requesterNote: body?.requesterNote,
+        });
+      } catch (cause) {
+        throw new HttpError(
+          cause instanceof Error
+            ? cause.message
+            : "Fulfillment data is invalid.",
+        );
+      }
       return json(
-        { data: await rewards.redeem(profile.id, rewardItemId) },
+        {
+          data: await rewards.redeem(profile.id, {
+            rewardItemId,
+            fulfillmentMethod: fulfillment.fulfillmentMethod,
+            recipientName: fulfillment.recipientName,
+            phone: fulfillment.phone,
+            deliveryAddress: fulfillment.deliveryAddress,
+            requesterNote: fulfillment.requesterNote,
+          }),
+        },
         201,
       );
+    }
+    if (req.method === "GET" && pathname === "/admin/reward-redemptions") {
+      requireAdmin(profile);
+      return json({ data: await rewards.listRedemptions() });
+    }
+    const redemptionStatusMatch = pathname.match(
+      /^\/admin\/reward-redemptions\/([0-9a-f-]{36})\/status$/i,
+    );
+    if (req.method === "PATCH" && redemptionStatusMatch) {
+      requireAdmin(profile);
+      const body = await parseJson(req);
+      const status = body?.status;
+      const note =
+        typeof body?.note === "string" ? body.note.trim() || null : null;
+      if (status !== "fulfilled" && status !== "cancelled")
+        throw new HttpError("Redemption status is invalid.");
+      if (note && note.length > 500)
+        throw new HttpError("Administrator note is too long.");
+      return json({
+        data: await rewards.updateRedemptionStatus({
+          id: redemptionStatusMatch[1],
+          status,
+          actorId: profile.id,
+          note,
+        }),
+      });
     }
     if (req.method === "GET" && pathname === "/admin/rewards") {
       requireAdmin(profile);
@@ -747,6 +803,10 @@ Deno.serve(async (req) => {
         typeof body?.incidentId === "string" ? body.incidentId : "";
       const technicianId =
         typeof body?.technicianId === "string" ? body.technicianId : "";
+      const urgencyVerified =
+        typeof body?.urgencyVerified === "string" ? body.urgencyVerified : "";
+      if (!["critical", "urgent", "normal"].includes(urgencyVerified))
+        throw new HttpError("Verified urgency is required.");
       const incident = await incidents.findForDispatch(incidentId);
       if (!incident)
         throw new HttpError("Incident is not available for assignment.", 404);
@@ -757,21 +817,22 @@ Deno.serve(async (req) => {
         technician.role !== "technician"
       )
         throw new HttpError("Technician was not found.", 404);
-      const sla = await workOrders.getSlaRule(incident.urgency_reported);
+      const sla = await workOrders.getSlaRule(urgencyVerified);
       if (!sla) throw new HttpError("SLA rule was not configured.", 409);
-      return json(
+      const { data, error: assignmentError } = await db.rpc(
+        "assign_incident_to_technician",
         {
-          data: await workOrders.create({
-            incidentId,
-            technicianId,
-            assignedBy: profile.id,
-            incidentCreatedAt: incident.created_at,
-            responseMinutes: sla.response_minutes,
-            resolveMinutes: sla.resolve_minutes,
-          }),
+          p_incident_id: incidentId,
+          p_technician_id: technicianId,
+          p_dispatcher_id: profile.id,
+          p_urgency_verified: urgencyVerified,
         },
-        201,
       );
+      if (assignmentError) throw assignmentError;
+      const assigned = Array.isArray(data) ? data[0] : data;
+      if (!assigned)
+        throw new HttpError("Incident is not available for assignment.", 409);
+      return json({ data: assigned }, 201);
     }
     if (req.method === "GET" && pathname === "/work-orders/mine") {
       if (!isApproved(profile) || profile.role !== "technician")
@@ -807,8 +868,7 @@ Deno.serve(async (req) => {
     if (req.method === "POST" && workOrderActionMatch) {
       const body = await parseJson(req);
       const actorRole =
-        profile.role === "technician" ||
-        profile.role === "dispatcher"
+        profile.role === "technician" || profile.role === "dispatcher"
           ? profile.role
           : null;
       if (!isApproved(profile) || !actorRole)
@@ -1006,6 +1066,31 @@ Deno.serve(async (req) => {
         ? (requestedStatus as ApprovalStatus)
         : null;
       return json({ data: await profiles.list(approvalStatus) });
+    }
+    if (
+      req.method === "POST" &&
+      pathname === "/admin/users/bulk-approve-reporters"
+    ) {
+      requireAdmin(profile);
+      const body = await parseJson(req);
+      const userIds = Array.isArray(body?.userIds) ? body.userIds : [];
+      if (
+        userIds.length < 1 ||
+        userIds.length > 200 ||
+        !userIds.every(
+          (id: unknown) =>
+            typeof id === "string" && /^[0-9a-f-]{36}$/i.test(id),
+        )
+      )
+        throw new HttpError("Select between 1 and 200 valid users.");
+      return json({
+        data: {
+          approvedCount: await profiles.bulkApproveReporters(
+            [...new Set(userIds as string[])],
+            profile.id,
+          ),
+        },
+      });
     }
     const approvalMatch = pathname.match(
       /^\/admin\/users\/([0-9a-f-]{36})\/approval$/i,
