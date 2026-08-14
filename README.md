@@ -36,7 +36,7 @@ npx supabase db reset
 | รออนุมัติ | `thitiporn.pending@isri.local` |
 | ถูกปฏิเสธ | `wittaya.external@isri.local` |
 
-บัญชีเหล่านี้มีไว้สำหรับ local development เท่านั้น ระบบ production ใช้ Google OAuth และไม่ใช้รหัสผ่าน seed
+บัญชีเหล่านี้มีไว้สำหรับ local development หรือ Cloud Demo ที่ล้างทิ้งได้เท่านั้น ระบบ Production จริงต้องใช้ Google OAuth และไม่ใช้รหัสผ่าน Seed
 
 หลัง `npx supabase start` ให้ใช้ URL และ publishable/anon key จาก `npx supabase status -o env` ใน `web/.env.local`
 
@@ -51,7 +51,7 @@ npx supabase db reset
 
 การ seed ไม่สร้างรหัสผ่านให้ Gmail จริง เพราะ token และตัวตน OAuth ต้องมาจาก Google ตาราง `bootstrap_admins` เก็บอีเมลผู้ดูแลเริ่มต้นและไม่เปิดให้ browser อ่าน
 
-คู่มือ Local, Production, Google OAuth, Vercel/Nginx และเช็กลิสต์หลัง Deploy อยู่ที่ [DEPLOYMENT_GUIDE.md](../web/DEPLOYMENT_GUIDE.md)
+คู่มือ Local, การล้าง Cloud Demo และลง Seed ผ่าน SQL Editor, Production, Google OAuth, Netlify/Nginx และเช็กลิสต์หลัง Deploy อยู่ที่ [DEPLOYMENT_GUIDE.md](../web/DEPLOYMENT_GUIDE.md)
 
 ## Realtime
 

@@ -27,10 +27,10 @@ set response_minutes = excluded.response_minutes,
     updated_at = now();
 
 -- ---------------------------------------------------------------------------
--- 2. Local development accounts
+-- 2. Development and disposable demo accounts
 -- ---------------------------------------------------------------------------
 -- All local accounts use IsriDemo123! and the reserved .local domain. They are
--- for local testing only and must never replace Google OAuth in production.
+-- for development/demo testing only and must never replace Google OAuth in production.
 insert into auth.users (
   instance_id, id, aud, role, email, encrypted_password, email_confirmed_at,
   raw_app_meta_data, raw_user_meta_data, created_at, updated_at,
