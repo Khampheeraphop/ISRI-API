@@ -9,6 +9,12 @@ do $$ begin
 exception when duplicate_object then null; end $$;
 
 do $$ begin
+  create type public.technician_specialty as enum (
+    'electrical', 'plumbing', 'air_conditioning', 'elevator', 'building'
+  );
+exception when duplicate_object then null; end $$;
+
+do $$ begin
   create type public.approval_status as enum ('pending', 'approved', 'rejected');
 exception when duplicate_object then null; end $$;
 
@@ -82,7 +88,7 @@ create table if not exists public.profiles (
   approval_status public.approval_status not null default 'pending',
   role public.app_role,
   requested_position text check (requested_position is null or char_length(trim(requested_position)) between 2 and 120),
-  technician_specialties text[] not null default '{}',
+  technician_specialties public.technician_specialty[] not null default '{}',
   approved_by uuid references public.profiles(id) on delete set null,
   approved_at timestamptz,
   rejection_reason text,
@@ -136,7 +142,7 @@ create table if not exists public.user_approval_history (
   user_id uuid not null references public.profiles(id) on delete cascade,
   action text not null check (action in ('approved', 'rejected')),
   role public.app_role,
-  specialties text[] not null default '{}',
+  specialties public.technician_specialty[] not null default '{}',
   note text,
   acted_by uuid not null references public.profiles(id) on delete restrict,
   created_at timestamptz not null default now()

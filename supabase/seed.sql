@@ -3,6 +3,9 @@
 -- This dataset is fictional but uses realistic hospital operations. Images are
 -- intentionally omitted so they can be uploaded through the application.
 
+-- Keep manual SQL Editor runs atomic: any error rolls back the entire dataset.
+begin;
+
 -- ---------------------------------------------------------------------------
 -- 1. System configuration
 -- ---------------------------------------------------------------------------
@@ -24,10 +27,10 @@ set response_minutes = excluded.response_minutes,
     updated_at = now();
 
 -- ---------------------------------------------------------------------------
--- 2. Local development accounts
+-- 2. Development and disposable demo accounts
 -- ---------------------------------------------------------------------------
 -- All local accounts use IsriDemo123! and the reserved .local domain. They are
--- for local testing only and must never replace Google OAuth in production.
+-- for development/demo testing only and must never replace Google OAuth in production.
 insert into auth.users (
   instance_id, id, aud, role, email, encrypted_password, email_confirmed_at,
   raw_app_meta_data, raw_user_meta_data, created_at, updated_at,
@@ -62,10 +65,10 @@ update public.profiles set approval_status = 'approved', role = 'dispatcher',
   requested_position = 'หัวหน้าหน่วยซ่อมบำรุง', approved_by = '10000000-0000-0000-0000-000000000001', approved_at = now() - interval '169 days'
 where id = '10000000-0000-0000-0000-000000000002';
 update public.profiles set approval_status = 'approved', role = 'technician',
-  requested_position = 'นายช่างไฟฟ้า', technician_specialties = array['electrical','elevator'], approved_by = '10000000-0000-0000-0000-000000000001', approved_at = now() - interval '159 days'
+  requested_position = 'นายช่างไฟฟ้า', technician_specialties = array['electrical','elevator']::public.technician_specialty[], approved_by = '10000000-0000-0000-0000-000000000001', approved_at = now() - interval '159 days'
 where id = '10000000-0000-0000-0000-000000000003';
 update public.profiles set approval_status = 'approved', role = 'technician',
-  requested_position = 'นายช่างซ่อมบำรุง', technician_specialties = array['plumbing','air_conditioning','building'], approved_by = '10000000-0000-0000-0000-000000000001', approved_at = now() - interval '154 days'
+  requested_position = 'นายช่างซ่อมบำรุง', technician_specialties = array['plumbing','air_conditioning','building']::public.technician_specialty[], approved_by = '10000000-0000-0000-0000-000000000001', approved_at = now() - interval '154 days'
 where id = '10000000-0000-0000-0000-000000000004';
 update public.profiles set approval_status = 'approved', role = 'reporter',
   requested_position = 'พยาบาลวิชาชีพ', approved_by = '10000000-0000-0000-0000-000000000001', approved_at = now() - interval '139 days'
@@ -85,8 +88,8 @@ where id = '10000000-0000-0000-0000-000000000009';
 insert into public.user_approval_history (id, user_id, action, role, specialties, note, acted_by, created_at)
 values
   ('11000000-0000-0000-0000-000000000002', '10000000-0000-0000-0000-000000000002', 'approved', 'dispatcher', '{}', 'อนุมัติให้รับผิดชอบการตรวจสอบและจัดสรรงาน', '10000000-0000-0000-0000-000000000001', now() - interval '169 days'),
-  ('11000000-0000-0000-0000-000000000003', '10000000-0000-0000-0000-000000000003', 'approved', 'technician', array['electrical','elevator'], 'อนุมัติตามขอบเขตงานช่างไฟฟ้า', '10000000-0000-0000-0000-000000000001', now() - interval '159 days'),
-  ('11000000-0000-0000-0000-000000000004', '10000000-0000-0000-0000-000000000004', 'approved', 'technician', array['plumbing','air_conditioning','building'], 'อนุมัติตามขอบเขตงานซ่อมบำรุงอาคาร', '10000000-0000-0000-0000-000000000001', now() - interval '154 days'),
+  ('11000000-0000-0000-0000-000000000003', '10000000-0000-0000-0000-000000000003', 'approved', 'technician', array['electrical','elevator']::public.technician_specialty[], 'อนุมัติตามขอบเขตงานช่างไฟฟ้า', '10000000-0000-0000-0000-000000000001', now() - interval '159 days'),
+  ('11000000-0000-0000-0000-000000000004', '10000000-0000-0000-0000-000000000004', 'approved', 'technician', array['plumbing','air_conditioning','building']::public.technician_specialty[], 'อนุมัติตามขอบเขตงานซ่อมบำรุงอาคาร', '10000000-0000-0000-0000-000000000001', now() - interval '154 days'),
   ('11000000-0000-0000-0000-000000000005', '10000000-0000-0000-0000-000000000005', 'approved', 'reporter', '{}', 'ตรวจสอบสถานะบุคลากรแล้ว', '10000000-0000-0000-0000-000000000001', now() - interval '139 days'),
   ('11000000-0000-0000-0000-000000000006', '10000000-0000-0000-0000-000000000006', 'approved', 'reporter', '{}', 'ตรวจสอบสถานะบุคลากรแล้ว', '10000000-0000-0000-0000-000000000001', now() - interval '129 days'),
   ('11000000-0000-0000-0000-000000000007', '10000000-0000-0000-0000-000000000007', 'approved', 'reporter', '{}', 'ตรวจสอบสถานะบุคลากรแล้ว', '10000000-0000-0000-0000-000000000001', now() - interval '119 days'),
@@ -283,3 +286,5 @@ begin
   end if;
 end;
 $$;
+
+commit;
