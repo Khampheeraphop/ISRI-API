@@ -41,6 +41,7 @@ import {
   PmScheduleService,
   parsePmScheduleInput,
 } from "./services/pmScheduleService.ts";
+import { validateFulfillment } from "./_shared/rewardRules.ts";
 
 async function requireSession(req: Request) {
   const supabaseUrl = Deno.env.get("SUPABASE_URL");
@@ -75,10 +76,7 @@ function requireAdmin(profile: Profile) {
 }
 
 function requireDispatcher(profile: Profile) {
-  if (
-    !isApproved(profile) ||
-    (profile.role !== "dispatcher" && profile.role !== "admin")
-  )
+  if (!isApproved(profile) || profile.role !== "dispatcher")
     throw new HttpError("Dispatcher access is required.", 403);
 }
 
@@ -232,11 +230,12 @@ Deno.serve(async (req) => {
 
     const historyWithActors = async (incidentId: string) => {
       const history = await workOrders.historyForIncident(incidentId);
-      const names = await profiles.namesByIds(
-        history.events.flatMap((event) =>
-          event.changed_by ? [event.changed_by] : [],
-        ),
+      const actorIds = history.events.flatMap((event) =>
+        event.changed_by ? [event.changed_by] : [],
       );
+      if (history.workOrder?.technician_id)
+        actorIds.push(history.workOrder.technician_id);
+      const names = await profiles.namesByIds(actorIds);
       const eventIds = history.events.map((event) => event.id);
       const { data: linkedFiles, error: linkedFilesError } = eventIds.length
         ? await db
@@ -256,7 +255,14 @@ Deno.serve(async (req) => {
         filesByEvent.set(link.work_order_history_id, current);
       }
       return {
-        workOrder: history.workOrder,
+        workOrder: history.workOrder
+          ? {
+              ...history.workOrder,
+              technician_name: history.workOrder.technician_id
+                ? (names.get(history.workOrder.technician_id) ?? "ไม่ระบุ")
+                : null,
+            }
+          : null,
         events: await Promise.all(
           history.events.map(async (event) => ({
             ...event,
@@ -284,11 +290,21 @@ Deno.serve(async (req) => {
 
     if (req.method === "GET" && pathname === "/dashboard/summary") {
       requireAdmin(profile);
-      const requestedDays = Number(url.searchParams.get("days") ?? "30");
-      const days = [30, 90, 180, 365].includes(requestedDays)
-        ? requestedDays
-        : 30;
-      return json({ data: await dashboard.summary(days) });
+      const month = url.searchParams.get("month") ?? "";
+      if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month))
+        throw new HttpError("Dashboard month is invalid.");
+      return json({ data: await dashboard.summary(month) });
+    }
+    if (
+      req.method === "GET" &&
+      (pathname === "/dashboard/reporting-counts" ||
+        pathname === "/dashboard/reporting-rate")
+    ) {
+      requireAdmin(profile);
+      const month = url.searchParams.get("month") ?? "";
+      if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month))
+        throw new HttpError("Dashboard month is invalid.");
+      return json({ data: await dashboard.getMonthlyReportingCounts(month) });
     }
 
     if (req.method === "GET" && pathname === "/sla/rules") {
@@ -386,10 +402,61 @@ Deno.serve(async (req) => {
         typeof body?.rewardItemId === "string" ? body.rewardItemId : "";
       if (!/^[0-9a-f-]{36}$/i.test(rewardItemId))
         throw new HttpError("Reward item is invalid.");
+      let fulfillment;
+      try {
+        fulfillment = validateFulfillment({
+          method: body?.fulfillmentMethod,
+          recipientName: body?.recipientName,
+          phone: body?.phone,
+          deliveryAddress: body?.deliveryAddress,
+          requesterNote: body?.requesterNote,
+        });
+      } catch (cause) {
+        throw new HttpError(
+          cause instanceof Error
+            ? cause.message
+            : "Fulfillment data is invalid.",
+        );
+      }
       return json(
-        { data: await rewards.redeem(profile.id, rewardItemId) },
+        {
+          data: await rewards.redeem(profile.id, {
+            rewardItemId,
+            fulfillmentMethod: fulfillment.fulfillmentMethod,
+            recipientName: fulfillment.recipientName,
+            phone: fulfillment.phone,
+            deliveryAddress: fulfillment.deliveryAddress,
+            requesterNote: fulfillment.requesterNote,
+          }),
+        },
         201,
       );
+    }
+    if (req.method === "GET" && pathname === "/admin/reward-redemptions") {
+      requireAdmin(profile);
+      return json({ data: await rewards.listRedemptions() });
+    }
+    const redemptionStatusMatch = pathname.match(
+      /^\/admin\/reward-redemptions\/([0-9a-f-]{36})\/status$/i,
+    );
+    if (req.method === "PATCH" && redemptionStatusMatch) {
+      requireAdmin(profile);
+      const body = await parseJson(req);
+      const status = body?.status;
+      const note =
+        typeof body?.note === "string" ? body.note.trim() || null : null;
+      if (status !== "fulfilled" && status !== "cancelled")
+        throw new HttpError("Redemption status is invalid.");
+      if (note && note.length > 500)
+        throw new HttpError("Administrator note is too long.");
+      return json({
+        data: await rewards.updateRedemptionStatus({
+          id: redemptionStatusMatch[1],
+          status,
+          actorId: profile.id,
+          note,
+        }),
+      });
     }
     if (req.method === "GET" && pathname === "/admin/rewards") {
       requireAdmin(profile);
@@ -736,6 +803,10 @@ Deno.serve(async (req) => {
         typeof body?.incidentId === "string" ? body.incidentId : "";
       const technicianId =
         typeof body?.technicianId === "string" ? body.technicianId : "";
+      const urgencyVerified =
+        typeof body?.urgencyVerified === "string" ? body.urgencyVerified : "";
+      if (!["critical", "urgent", "normal"].includes(urgencyVerified))
+        throw new HttpError("Verified urgency is required.");
       const incident = await incidents.findForDispatch(incidentId);
       if (!incident)
         throw new HttpError("Incident is not available for assignment.", 404);
@@ -746,21 +817,22 @@ Deno.serve(async (req) => {
         technician.role !== "technician"
       )
         throw new HttpError("Technician was not found.", 404);
-      const sla = await workOrders.getSlaRule(incident.urgency_reported);
+      const sla = await workOrders.getSlaRule(urgencyVerified);
       if (!sla) throw new HttpError("SLA rule was not configured.", 409);
-      return json(
+      const { data, error: assignmentError } = await db.rpc(
+        "assign_incident_to_technician",
         {
-          data: await workOrders.create({
-            incidentId,
-            technicianId,
-            assignedBy: profile.id,
-            incidentCreatedAt: incident.created_at,
-            responseMinutes: sla.response_minutes,
-            resolveMinutes: sla.resolve_minutes,
-          }),
+          p_incident_id: incidentId,
+          p_technician_id: technicianId,
+          p_dispatcher_id: profile.id,
+          p_urgency_verified: urgencyVerified,
         },
-        201,
       );
+      if (assignmentError) throw assignmentError;
+      const assigned = Array.isArray(data) ? data[0] : data;
+      if (!assigned)
+        throw new HttpError("Incident is not available for assignment.", 409);
+      return json({ data: assigned }, 201);
     }
     if (req.method === "GET" && pathname === "/work-orders/mine") {
       if (!isApproved(profile) || profile.role !== "technician")
@@ -773,10 +845,10 @@ Deno.serve(async (req) => {
     if (req.method === "GET" && workOrderDetailMatch) {
       if (
         !isApproved(profile) ||
-        !["technician", "dispatcher", "admin"].includes(profile.role ?? "")
+        !["technician", "dispatcher"].includes(profile.role ?? "")
       )
         throw new HttpError("Work order access is required.", 403);
-      const actorRole = profile.role as "technician" | "dispatcher" | "admin";
+      const actorRole = profile.role as "technician" | "dispatcher";
       const workOrder = await workOrders.getByIdForActor(
         workOrderDetailMatch[1],
         profile.id,
@@ -796,9 +868,7 @@ Deno.serve(async (req) => {
     if (req.method === "POST" && workOrderActionMatch) {
       const body = await parseJson(req);
       const actorRole =
-        profile.role === "technician" ||
-        profile.role === "dispatcher" ||
-        profile.role === "admin"
+        profile.role === "technician" || profile.role === "dispatcher"
           ? profile.role
           : null;
       if (!isApproved(profile) || !actorRole)
@@ -996,6 +1066,31 @@ Deno.serve(async (req) => {
         ? (requestedStatus as ApprovalStatus)
         : null;
       return json({ data: await profiles.list(approvalStatus) });
+    }
+    if (
+      req.method === "POST" &&
+      pathname === "/admin/users/bulk-approve-reporters"
+    ) {
+      requireAdmin(profile);
+      const body = await parseJson(req);
+      const userIds = Array.isArray(body?.userIds) ? body.userIds : [];
+      if (
+        userIds.length < 1 ||
+        userIds.length > 200 ||
+        !userIds.every(
+          (id: unknown) =>
+            typeof id === "string" && /^[0-9a-f-]{36}$/i.test(id),
+        )
+      )
+        throw new HttpError("Select between 1 and 200 valid users.");
+      return json({
+        data: {
+          approvedCount: await profiles.bulkApproveReporters(
+            [...new Set(userIds as string[])],
+            profile.id,
+          ),
+        },
+      });
     }
     const approvalMatch = pathname.match(
       /^\/admin\/users\/([0-9a-f-]{36})\/approval$/i,

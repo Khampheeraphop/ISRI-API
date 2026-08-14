@@ -30,6 +30,15 @@ type HistoryRow = {
 
 type TechnicianRow = { id: string; full_name: string };
 
+type IncidentTimestampRow = { id: string; created_at: string };
+
+type PmScheduleRow = {
+  id: string;
+  location_label: string;
+  asset_name: string;
+  next_due_at: string;
+};
+
 const activeWorkOrderStatuses = new Set([
   "pending",
   "in_progress",
@@ -48,35 +57,79 @@ const activeIncidentStatuses = [
   "pending_repair_approval",
 ];
 
-function monthKey(value: Date) {
-  return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, "0")}`;
-}
-
-function monthBuckets(since: Date, until: Date) {
-  const cursor = new Date(since.getFullYear(), since.getMonth(), 1);
-  const last = new Date(until.getFullYear(), until.getMonth(), 1);
-  const buckets = new Map<string, { reported: number; completed: number }>();
-  while (cursor <= last) {
-    buckets.set(monthKey(cursor), { reported: 0, completed: 0 });
-    cursor.setMonth(cursor.getMonth() + 1);
-  }
-  return buckets;
-}
-
 export class DashboardRepository {
   constructor(private readonly db: DatabaseClient) {}
 
-  async summary(days: number) {
+  async getMonthlyReportingCounts(periodMonth: string) {
+    const [year, monthNumber] = periodMonth.split("-").map(Number);
+    const selectedMonth = new Date(Date.UTC(year, monthNumber - 1, 1));
+    const firstMonth = new Date(
+      Date.UTC(
+        selectedMonth.getUTCFullYear(),
+        selectedMonth.getUTCMonth() - 5,
+        1,
+      ),
+    );
+    const afterSelectedMonth = new Date(
+      Date.UTC(
+        selectedMonth.getUTCFullYear(),
+        selectedMonth.getUTCMonth() + 1,
+        1,
+      ),
+    );
+    const months = new Map<string, number>();
+    for (let offset = 0; offset < 6; offset += 1) {
+      const month = new Date(
+        Date.UTC(
+          firstMonth.getUTCFullYear(),
+          firstMonth.getUTCMonth() + offset,
+          1,
+        ),
+      );
+      months.set(
+        `${month.getUTCFullYear()}-${String(month.getUTCMonth() + 1).padStart(2, "0")}`,
+        0,
+      );
+    }
+
+    const { data, error } = await this.db
+      .from("incidents")
+      .select("created_at")
+      .gte("created_at", firstMonth.toISOString())
+      .lt("created_at", afterSelectedMonth.toISOString());
+    if (error) throw error;
+
+    for (const incident of data ?? []) {
+      const month = String(incident.created_at).slice(0, 7);
+      if (months.has(month)) months.set(month, (months.get(month) ?? 0) + 1);
+    }
+
+    return [...months.entries()].map(([month, count]) => ({ month, count }));
+  }
+
+  async summary(periodMonth: string) {
     const now = new Date();
-    const since = new Date(now);
-    since.setDate(since.getDate() - days);
+    const pmDueSoonUntil = new Date(now);
+    pmDueSoonUntil.setUTCDate(pmDueSoonUntil.getUTCDate() + 30);
+    const [year, month] = periodMonth.split("-").map(Number);
+    const since = new Date(Date.UTC(year, month - 1, 1));
+    const until = new Date(Date.UTC(year, month, 1));
 
     const [
       incidentsResult,
       openIncidentsResult,
       activeWorkOrdersResult,
+      periodWorkOrdersResult,
       recentHistoryResult,
       techniciansResult,
+      pointWalletsResult,
+      pointTransactionsResult,
+      rewardRedemptionsResult,
+      activeRewardsResult,
+      activeCampaignsResult,
+      pmSchedulesResult,
+      overduePmCountResult,
+      dueSoonPmCountResult,
     ] = await Promise.all([
       this.db
         .from("incidents")
@@ -84,6 +137,7 @@ export class DashboardRepository {
           "id, ticket_number, location_label, asset_name, category, urgency_reported, status, created_at",
         )
         .gte("created_at", since.toISOString())
+        .lt("created_at", until.toISOString())
         .order("created_at", { ascending: false }),
       this.db
         .from("incidents")
@@ -98,23 +152,68 @@ export class DashboardRepository {
         )
         .in("status", [...activeWorkOrderStatuses]),
       this.db
+        .from("work_orders")
+        .select(
+          "id, incident_id, technician_id, status, respond_due_at, resolve_due_at, assigned_at, created_at",
+        )
+        .gte("assigned_at", since.toISOString())
+        .lt("assigned_at", until.toISOString()),
+      this.db
         .from("work_order_history")
         .select("work_order_id, status, changed_at")
-        .gte("changed_at", since.toISOString()),
+        .gte("changed_at", since.toISOString())
+        .lt("changed_at", until.toISOString()),
       this.db
         .from("profiles")
         .select("id, full_name")
         .eq("approval_status", "approved")
         .eq("role", "technician")
         .order("full_name"),
+      this.db.from("point_wallets").select("balance"),
+      this.db
+        .from("point_transactions")
+        .select("amount, transaction_type")
+        .gte("created_at", since.toISOString())
+        .lt("created_at", until.toISOString()),
+      this.db
+        .from("reward_redemptions")
+        .select("id")
+        .gte("redeemed_at", since.toISOString())
+        .lt("redeemed_at", until.toISOString()),
+      this.db.from("reward_items").select("id").eq("is_active", true),
+      this.db.from("reward_campaigns").select("id").eq("status", "active"),
+      this.db
+        .from("pm_schedules")
+        .select("id, location_label, asset_name, next_due_at")
+        .lte("next_due_at", pmDueSoonUntil.toISOString())
+        .order("next_due_at")
+        .limit(5),
+      this.db
+        .from("pm_schedules")
+        .select("id", { count: "exact", head: true })
+        .lt("next_due_at", now.toISOString()),
+      this.db
+        .from("pm_schedules")
+        .select("id", { count: "exact", head: true })
+        .gte("next_due_at", now.toISOString())
+        .lte("next_due_at", pmDueSoonUntil.toISOString()),
     ]);
 
     for (const result of [
       incidentsResult,
       openIncidentsResult,
       activeWorkOrdersResult,
+      periodWorkOrdersResult,
       recentHistoryResult,
       techniciansResult,
+      pointWalletsResult,
+      pointTransactionsResult,
+      rewardRedemptionsResult,
+      activeRewardsResult,
+      activeCampaignsResult,
+      pmSchedulesResult,
+      overduePmCountResult,
+      dueSoonPmCountResult,
     ]) {
       if (result.error) throw result.error;
     }
@@ -123,8 +222,22 @@ export class DashboardRepository {
     const openIncidents = (openIncidentsResult.data ?? []) as IncidentRow[];
     const activeWorkOrders = (activeWorkOrdersResult.data ??
       []) as WorkOrderRow[];
+    const periodWorkOrders = (periodWorkOrdersResult.data ??
+      []) as WorkOrderRow[];
     const recentHistory = (recentHistoryResult.data ?? []) as HistoryRow[];
     const technicians = (techniciansResult.data ?? []) as TechnicianRow[];
+    const pmSchedules = (pmSchedulesResult.data ?? []) as PmScheduleRow[];
+    const totalWalletPoints = (pointWalletsResult.data ?? []).reduce(
+      (sum, wallet) => sum + Number(wallet.balance),
+      0,
+    );
+    const pointsIssued = (pointTransactionsResult.data ?? []).reduce(
+      (sum, transaction) =>
+        transaction.transaction_type === "earn"
+          ? sum + Number(transaction.amount)
+          : sum,
+      0,
+    );
 
     const recentOrderIds = [
       ...new Set(recentHistory.map((event) => event.work_order_id)),
@@ -151,10 +264,22 @@ export class DashboardRepository {
     if (recentOrderHistoryResult.error) throw recentOrderHistoryResult.error;
 
     const recentOrders = (recentOrdersResult.data ?? []) as WorkOrderRow[];
+    const recentIncidentIds = [
+      ...new Set(recentOrders.map((order) => order.incident_id)),
+    ];
+    const recentIncidentsResult = recentIncidentIds.length
+      ? await this.db
+          .from("incidents")
+          .select("id, created_at")
+          .in("id", recentIncidentIds)
+      : { data: [], error: null };
+    if (recentIncidentsResult.error) throw recentIncidentsResult.error;
     const fullRecentOrderHistory = (recentOrderHistoryResult.data ??
       []) as HistoryRow[];
-    const incidentById = new Map(
-      [...incidents, ...openIncidents].map((item) => [item.id, item]),
+    const recentIncidentCreatedAt = new Map(
+      ((recentIncidentsResult.data ?? []) as IncidentTimestampRow[]).map(
+        (incident) => [incident.id, incident.created_at],
+      ),
     );
     const historyByWorkOrder = new Map<string, HistoryRow[]>();
     for (const event of fullRecentOrderHistory) {
@@ -176,11 +301,6 @@ export class DashboardRepository {
       (item) =>
         item.status === "submitted" || item.status === "pending_assignment",
     );
-    const pendingReview = openWorkOrders.filter((item) =>
-      ["pending_parts_approval", "pending_repair_approval"].includes(
-        item.status,
-      ),
-    );
 
     const acceptedAt = (order: WorkOrderRow) =>
       (historyByWorkOrder.get(order.id) ?? []).find(
@@ -191,10 +311,22 @@ export class DashboardRepository {
         (event) => event.status === "done",
       )?.changed_at;
     const responded = recentOrders
-      .map((order) => ({ order, occurredAt: acceptedAt(order) }))
+      .map((order) => ({
+        order,
+        occurredAt: acceptedAt(order),
+        incidentCreatedAt: recentIncidentCreatedAt.get(order.incident_id),
+      }))
       .filter(
-        (item): item is { order: WorkOrderRow; occurredAt: string } =>
-          item.occurredAt !== undefined && new Date(item.occurredAt) >= since,
+        (
+          item,
+        ): item is {
+          order: WorkOrderRow;
+          occurredAt: string;
+          incidentCreatedAt: string;
+        } =>
+          item.occurredAt !== undefined &&
+          item.incidentCreatedAt !== undefined &&
+          new Date(item.occurredAt) >= since,
       );
     const completed = recentOrders
       .map((order) => ({ order, occurredAt: completedAt(order) }))
@@ -206,11 +338,23 @@ export class DashboardRepository {
       ({ order, occurredAt }) =>
         new Date(occurredAt) <= new Date(order.respond_due_at),
     ).length;
+    const averageResponseMinutes = responded.length
+      ? Math.round(
+          responded.reduce(
+            (sum, { occurredAt, incidentCreatedAt }) =>
+              sum +
+              (new Date(occurredAt).getTime() -
+                new Date(incidentCreatedAt).getTime()) /
+                60000,
+            0,
+          ) / responded.length,
+        )
+      : null;
     const resolutionOnTime = completed.filter(
       ({ order, occurredAt }) =>
         new Date(occurredAt) <= new Date(order.resolve_due_at),
     ).length;
-    const averageResolutionMinutes = completed.length
+    const averageClosureMinutes = completed.length
       ? Math.round(
           completed.reduce(
             (sum, { order, occurredAt }) =>
@@ -246,64 +390,30 @@ export class DashboardRepository {
     }
 
     const workloadByTechnician = new Map<string, number>();
-    for (const order of openWorkOrders)
+    for (const order of periodWorkOrders)
       workloadByTechnician.set(
         order.technician_id,
         (workloadByTechnician.get(order.technician_id) ?? 0) + 1,
       );
 
-    const months = monthBuckets(since, now);
-    for (const incident of incidents) {
-      const key = incident.created_at.slice(0, 7);
-      const current = months.get(key);
-      if (!current) continue;
-      current.reported += 1;
-    }
-    for (const event of recentHistory) {
-      if (event.status !== "done") continue;
-      const current = months.get(event.changed_at.slice(0, 7));
-      if (current) current.completed += 1;
-    }
-
-    const reviewRows = pendingReview.map((order) => {
-      const incident = incidentById.get(order.incident_id);
-      return {
-        workOrderId: order.id,
-        ticketNumber: incident?.ticket_number ?? "-",
-        locationLabel: incident?.location_label ?? "-",
-        status: order.status,
-        resolveDueAt: order.resolve_due_at,
-      };
-    });
-    const unassignedRows = pendingAssignment.map((incident) => ({
-      incidentId: incident.id,
-      ticketNumber: incident.ticket_number,
-      locationLabel: incident.location_label,
-      status: incident.status,
-      createdAt: incident.created_at,
-    }));
-
     return {
       generatedAt: now.toISOString(),
-      periodDays: days,
+      periodMonth,
       attention: {
         overdue: overdue.length,
         nearDue: nearDue.length,
         pendingAssignment: pendingAssignment.length,
-        pendingReview: pendingReview.length,
       },
       sla: {
         responseOnTimeRate: responded.length
           ? Math.round((responseOnTime / responded.length) * 100)
           : null,
+        averageResponseMinutes,
         resolutionOnTimeRate: completed.length
           ? Math.round((resolutionOnTime / completed.length) * 100)
           : null,
-        averageResolutionMinutes,
+        averageClosureMinutes,
       },
-      trend: [...months.entries()]
-        .sort(([left], [right]) => left.localeCompare(right))
-        .map(([month, value]) => ({ month, ...value })),
       statusCounts: Object.entries(
         incidents.reduce<Record<string, number>>((counts, incident) => {
           counts[incident.status] = (counts[incident.status] ?? 0) + 1;
@@ -311,27 +421,36 @@ export class DashboardRepository {
         }, {}),
       ).map(([status, count]) => ({ status, count })),
       hotspots: [...hotspotMap.values()]
+        .filter((item) => item.count >= 2)
         .sort(
           (left, right) =>
             right.count - left.count || right.openCount - left.openCount,
         )
         .slice(0, 5),
+      pm: {
+        overdueCount: overduePmCountResult.count ?? 0,
+        dueSoonCount: dueSoonPmCountResult.count ?? 0,
+        items: pmSchedules.map((schedule) => ({
+          id: schedule.id,
+          locationLabel: schedule.location_label,
+          assetName: schedule.asset_name,
+          nextDueAt: schedule.next_due_at,
+          state: new Date(schedule.next_due_at) < now ? "overdue" : "due_soon",
+        })),
+      },
       technicianWorkload: technicians
         .map((technician) => ({
           technicianId: technician.id,
           technicianName: technician.full_name,
-          activeCount: workloadByTechnician.get(technician.id) ?? 0,
+          assignedCount: workloadByTechnician.get(technician.id) ?? 0,
         }))
-        .sort((left, right) => right.activeCount - left.activeCount),
-      attentionItems: {
-        unassigned: unassignedRows.slice(0, 5),
-        review: reviewRows
-          .sort(
-            (left, right) =>
-              new Date(left.resolveDueAt).getTime() -
-              new Date(right.resolveDueAt).getTime(),
-          )
-          .slice(0, 5),
+        .sort((left, right) => right.assignedCount - left.assignedCount),
+      incentives: {
+        totalWalletPoints,
+        pointsIssued,
+        redemptionCount: (rewardRedemptionsResult.data ?? []).length,
+        activeRewardCount: (activeRewardsResult.data ?? []).length,
+        activeCampaignCount: (activeCampaignsResult.data ?? []).length,
       },
     };
   }

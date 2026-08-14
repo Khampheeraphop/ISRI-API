@@ -115,4 +115,13 @@ export class ProfileRepository {
     if (historyError) throw historyError;
     return data as Profile;
   }
+
+  async bulkApproveReporters(userIds: string[], actedBy: string) {
+    const { data, error } = await this.db.rpc("bulk_approve_reporters", {
+      p_user_ids: userIds,
+      p_actor_id: actedBy,
+    });
+    if (error) throw error;
+    return Number(data ?? 0);
+  }
 }

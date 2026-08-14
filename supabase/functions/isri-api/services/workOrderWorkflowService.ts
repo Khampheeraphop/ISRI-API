@@ -30,7 +30,7 @@ export function validateWorkOrderAction(input: {
     (action === "request_parts" ||
       action === "submit_repair" ||
       action === "return_for_rework") &&
-    note.length < 5
+    !note
   )
     throw new HttpError("A work note is required for this action.");
   if (note.length > 2000) throw new HttpError("Work note is too long.");

@@ -91,7 +91,9 @@ export class IncidentRepository {
   async findForDispatch(id: string) {
     const { data, error } = await this.db
       .from("incidents")
-      .select("id, ticket_number, urgency_reported, created_at")
+      .select(
+        "id, ticket_number, urgency_reported, urgency_verified, created_at",
+      )
       .eq("id", id)
       .eq("status", "pending_assignment")
       .maybeSingle();
@@ -103,7 +105,7 @@ export class IncidentRepository {
     const { data: incident, error: incidentError } = await this.db
       .from("incidents")
       .select(
-        "id, ticket_number, location_id, location_label, asset_name, category, urgency_reported, description, status, created_at, updated_at",
+        "id, ticket_number, location_id, location_label, asset_name, category, urgency_reported, urgency_verified, description, status, created_at, updated_at",
       )
       .eq("id", id)
       .eq("status", "pending_assignment")
@@ -124,7 +126,7 @@ export class IncidentRepository {
     const { data, error } = await this.db
       .from("incidents")
       .select(
-        "id, ticket_number, location_label, asset_name, category, urgency_reported, description, created_at",
+        "id, ticket_number, location_label, asset_name, category, urgency_reported, urgency_verified, description, created_at",
       )
       .eq("status", "pending_assignment")
       .order("created_at", { ascending: true });
@@ -157,6 +159,22 @@ export class IncidentRepository {
       .update({ status: "assigned" })
       .eq("id", id);
     if (error) throw error;
+  }
+
+  async verifyUrgency(id: string, urgency: string, verifiedBy: string) {
+    const { data, error } = await this.db
+      .from("incidents")
+      .update({
+        urgency_verified: urgency,
+        urgency_verified_by: verifiedBy,
+        urgency_verified_at: new Date().toISOString(),
+      })
+      .eq("id", id)
+      .eq("status", "pending_assignment")
+      .select("id, urgency_verified")
+      .maybeSingle();
+    if (error) throw error;
+    return data;
   }
 
   async updateStatus(id: string, status: string) {
