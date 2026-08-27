@@ -1,4 +1,9 @@
 import type { DatabaseClient } from "../_shared/types.ts";
+import {
+  getBangkokPeriodMonth,
+  getDashboardMonthRange,
+  getDashboardReportingPeriod,
+} from "../_shared/dashboardPeriod.ts";
 
 type IncidentRow = {
   id: string;
@@ -61,46 +66,18 @@ export class DashboardRepository {
   constructor(private readonly db: DatabaseClient) {}
 
   async getMonthlyReportingCounts(periodMonth: string) {
-    const [year, monthNumber] = periodMonth.split("-").map(Number);
-    const selectedMonth = new Date(Date.UTC(year, monthNumber - 1, 1));
-    const firstMonth = new Date(
-      Date.UTC(
-        selectedMonth.getUTCFullYear(),
-        selectedMonth.getUTCMonth() - 5,
-        1,
-      ),
-    );
-    const afterSelectedMonth = new Date(
-      Date.UTC(
-        selectedMonth.getUTCFullYear(),
-        selectedMonth.getUTCMonth() + 1,
-        1,
-      ),
-    );
-    const months = new Map<string, number>();
-    for (let offset = 0; offset < 6; offset += 1) {
-      const month = new Date(
-        Date.UTC(
-          firstMonth.getUTCFullYear(),
-          firstMonth.getUTCMonth() + offset,
-          1,
-        ),
-      );
-      months.set(
-        `${month.getUTCFullYear()}-${String(month.getUTCMonth() + 1).padStart(2, "0")}`,
-        0,
-      );
-    }
+    const period = getDashboardReportingPeriod(periodMonth);
+    const months = new Map(period.months.map((month) => [month, 0]));
 
     const { data, error } = await this.db
       .from("incidents")
       .select("created_at")
-      .gte("created_at", firstMonth.toISOString())
-      .lt("created_at", afterSelectedMonth.toISOString());
+      .gte("created_at", period.since.toISOString())
+      .lt("created_at", period.until.toISOString());
     if (error) throw error;
 
     for (const incident of data ?? []) {
-      const month = String(incident.created_at).slice(0, 7);
+      const month = getBangkokPeriodMonth(String(incident.created_at));
       if (months.has(month)) months.set(month, (months.get(month) ?? 0) + 1);
     }
 
@@ -111,9 +88,7 @@ export class DashboardRepository {
     const now = new Date();
     const pmDueSoonUntil = new Date(now);
     pmDueSoonUntil.setUTCDate(pmDueSoonUntil.getUTCDate() + 30);
-    const [year, month] = periodMonth.split("-").map(Number);
-    const since = new Date(Date.UTC(year, month - 1, 1));
-    const until = new Date(Date.UTC(year, month, 1));
+    const { since, until } = getDashboardMonthRange(periodMonth);
 
     const [
       incidentsResult,
@@ -329,10 +304,22 @@ export class DashboardRepository {
           new Date(item.occurredAt) >= since,
       );
     const completed = recentOrders
-      .map((order) => ({ order, occurredAt: completedAt(order) }))
+      .map((order) => ({
+        order,
+        occurredAt: completedAt(order),
+        incidentCreatedAt: recentIncidentCreatedAt.get(order.incident_id),
+      }))
       .filter(
-        (item): item is { order: WorkOrderRow; occurredAt: string } =>
-          item.occurredAt !== undefined && new Date(item.occurredAt) >= since,
+        (
+          item,
+        ): item is {
+          order: WorkOrderRow;
+          occurredAt: string;
+          incidentCreatedAt: string;
+        } =>
+          item.occurredAt !== undefined &&
+          item.incidentCreatedAt !== undefined &&
+          new Date(item.occurredAt) >= since,
       );
     const responseOnTime = responded.filter(
       ({ order, occurredAt }) =>
@@ -357,10 +344,10 @@ export class DashboardRepository {
     const averageClosureMinutes = completed.length
       ? Math.round(
           completed.reduce(
-            (sum, { order, occurredAt }) =>
+            (sum, { occurredAt, incidentCreatedAt }) =>
               sum +
               (new Date(occurredAt).getTime() -
-                new Date(order.created_at).getTime()) /
+                new Date(incidentCreatedAt).getTime()) /
                 60000,
             0,
           ) / completed.length,

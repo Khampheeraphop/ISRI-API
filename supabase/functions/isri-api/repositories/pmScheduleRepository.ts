@@ -1,9 +1,9 @@
 import type { DatabaseClient } from "../_shared/types.ts";
 
 const scheduleColumns =
-  "id, location_id, location_label, asset_name, interval_months, last_done_at, next_due_at, created_at, updated_at";
+  "id, location_id, location_label, asset_name, plan_details, interval_months, last_done_at, next_due_at, created_at, updated_at";
 const logColumns =
-  "id, schedule_id, completed_at, technician_id, notes, created_at";
+  "id, schedule_id, completed_at, technician_id, notes, created_at, profiles!pm_logs_technician_id_fkey(full_name)";
 
 export class PmScheduleRepository {
   constructor(private readonly db: DatabaseClient) {}
@@ -27,10 +27,27 @@ export class PmScheduleRepository {
     return data;
   }
 
+  async findByLocationAndAsset(
+    locationId: string,
+    assetName: string,
+    excludeId?: string,
+  ) {
+    let query = this.db
+      .from("pm_schedules")
+      .select("id")
+      .eq("location_id", locationId)
+      .eq("asset_name", assetName);
+    if (excludeId) query = query.neq("id", excludeId);
+    const { data, error } = await query.maybeSingle();
+    if (error) throw error;
+    return data;
+  }
+
   async create(input: {
     locationId: string;
     locationLabel: string;
     assetName: string;
+    planDetails: string;
     intervalMonths: number;
     lastDoneAt: string;
     nextDueAt: string;
@@ -41,6 +58,7 @@ export class PmScheduleRepository {
         location_id: input.locationId,
         location_label: input.locationLabel,
         asset_name: input.assetName,
+        plan_details: input.planDetails,
         interval_months: input.intervalMonths,
         last_done_at: input.lastDoneAt,
         next_due_at: input.nextDueAt,
@@ -57,6 +75,7 @@ export class PmScheduleRepository {
       locationId: string;
       locationLabel: string;
       assetName: string;
+      planDetails: string;
       intervalMonths: number;
       lastDoneAt: string;
       nextDueAt: string;
@@ -68,6 +87,7 @@ export class PmScheduleRepository {
         location_id: input.locationId,
         location_label: input.locationLabel,
         asset_name: input.assetName,
+        plan_details: input.planDetails,
         interval_months: input.intervalMonths,
         last_done_at: input.lastDoneAt,
         next_due_at: input.nextDueAt,
@@ -93,6 +113,7 @@ export class PmScheduleRepository {
   async recordCompletion(input: {
     scheduleId: string;
     technicianId: string;
+    completedAt: string;
     notes: string;
   }) {
     const { data, error } = await this.db
@@ -101,7 +122,7 @@ export class PmScheduleRepository {
         schedule_id: input.scheduleId,
         technician_id: input.technicianId,
         notes: input.notes,
-        completed_at: new Date().toISOString(),
+        completed_at: input.completedAt,
       })
       .select(logColumns)
       .single();

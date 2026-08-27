@@ -1,7 +1,7 @@
 import type { DatabaseClient } from "../_shared/types.ts";
 
 const columns =
-  "id, urgency_level, response_minutes, resolve_minutes, updated_at";
+  "id, urgency_level, response_minutes, resolve_minutes, point_value, updated_at";
 
 export class SlaRepository {
   constructor(private readonly db: DatabaseClient) {}
@@ -17,13 +17,14 @@ export class SlaRepository {
 
   async updateRule(
     id: string,
-    input: { responseMinutes: number; resolveMinutes: number },
+    input: { responseMinutes: number; resolveMinutes: number; pointValue: number },
   ) {
     const { data, error } = await this.db
       .from("sla_rules")
       .update({
         response_minutes: input.responseMinutes,
         resolve_minutes: input.resolveMinutes,
+        point_value: input.pointValue,
         updated_at: new Date().toISOString(),
       })
       .eq("id", id)

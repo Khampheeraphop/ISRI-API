@@ -16,14 +16,15 @@ insert into public.bootstrap_admins (email, display_name)
 values ('poplowplay1@gmail.com', 'ผู้ดูแลระบบหลัก')
 on conflict (email) do update set display_name = excluded.display_name;
 
-insert into public.sla_rules (urgency_level, response_minutes, resolve_minutes)
+insert into public.sla_rules (urgency_level, response_minutes, resolve_minutes, point_value)
 values
-  ('critical', 30, 240),
-  ('urgent', 120, 1440),
-  ('normal', 1440, 4320)
+  ('critical', 30, 240, 30),
+  ('urgent', 120, 1440, 20),
+  ('normal', 1440, 4320, 10)
 on conflict (urgency_level) do update
 set response_minutes = excluded.response_minutes,
     resolve_minutes = excluded.resolve_minutes,
+    point_value = excluded.point_value,
     updated_at = now();
 
 -- ---------------------------------------------------------------------------
@@ -155,12 +156,13 @@ insert into public.incidents (
 
 insert into public.work_orders (
   id, incident_id, technician_id, assigned_by, assigned_at, status,
-  respond_due_at, resolve_due_at, created_at, updated_at
+  respond_due_at, resolve_due_at, sla_point_value, created_at, updated_at
 )
 select values_.id::uuid, values_.incident_id::uuid, values_.technician_id::uuid,
        '10000000-0000-0000-0000-000000000002'::uuid, values_.assigned_at,
        'pending'::public.work_order_status, values_.respond_due_at,
-       values_.resolve_due_at, values_.assigned_at, values_.assigned_at
+       values_.resolve_due_at, sla_rule.point_value,
+       values_.assigned_at, values_.assigned_at
 from (values
   ('40000000-0000-0000-0000-000000000003','30000000-0000-0000-0000-000000000003','10000000-0000-0000-0000-000000000003',now()-interval '45 minutes',now()+interval '75 minutes',now()+interval '23 hours'),
   ('40000000-0000-0000-0000-000000000004','30000000-0000-0000-0000-000000000004','10000000-0000-0000-0000-000000000004',now()-interval '4 hours',now()-interval '2 hours',now()+interval '20 hours'),
@@ -172,7 +174,9 @@ from (values
   ('40000000-0000-0000-0000-000000000010','30000000-0000-0000-0000-000000000010','10000000-0000-0000-0000-000000000003',now()-interval '14 days',now()-interval '13 days',now()-interval '11 days'),
   ('40000000-0000-0000-0000-000000000011','30000000-0000-0000-0000-000000000011','10000000-0000-0000-0000-000000000004',now()-interval '18 days',now()-interval '17 days 22 hours',now()-interval '17 days'),
   ('40000000-0000-0000-0000-000000000012','30000000-0000-0000-0000-000000000012','10000000-0000-0000-0000-000000000004',now()-interval '24 days',now()-interval '23 days',now()-interval '21 days')
-) as values_(id,incident_id,technician_id,assigned_at,respond_due_at,resolve_due_at);
+) as values_(id,incident_id,technician_id,assigned_at,respond_due_at,resolve_due_at)
+join public.incidents as incident on incident.id = values_.incident_id::uuid
+join public.sla_rules as sla_rule on sla_rule.urgency_level = incident.urgency_verified;
 
 update public.work_orders set status = 'in_progress', updated_at = now() - interval '2 hours' where id = '40000000-0000-0000-0000-000000000004';
 update public.work_orders set status = 'pending_parts_approval', updated_at = now() - interval '5 hours' where id = '40000000-0000-0000-0000-000000000005';
@@ -244,13 +248,13 @@ values
 -- ---------------------------------------------------------------------------
 -- 7. Preventive maintenance schedules and logs
 -- ---------------------------------------------------------------------------
-insert into public.pm_schedules (id, location_id, location_label, asset_name, interval_months, last_done_at, next_due_at)
+insert into public.pm_schedules (id, location_id, location_label, asset_name, plan_details, interval_months, last_done_at, next_due_at)
 values
-  ('80000000-0000-0000-0000-000000000001','20000000-0000-0000-0000-000000000007','อาคารผู้ป่วยนอก · ทุกชั้น · โถงลิฟต์ A','ลิฟต์โดยสาร A',1,now()-interval '35 days',now()-interval '5 days'),
-  ('80000000-0000-0000-0000-000000000002','20000000-0000-0000-0000-000000000005','อาคารเภสัชกรรม · ชั้น 1 · ห้องเก็บเวชภัณฑ์','เครื่องปรับอากาศควบคุมอุณหภูมิ',3,now()-interval '89 days',now()+interval '1 day'),
-  ('80000000-0000-0000-0000-000000000003','20000000-0000-0000-0000-000000000004','อาคารอุบัติเหตุและฉุกเฉิน · ชั้น 1 · หน้าห้องกู้ชีพ','ตู้จ่ายไฟฟ้าฉุกเฉิน',1,now()-interval '25 days',now()+interval '5 days'),
-  ('80000000-0000-0000-0000-000000000004','20000000-0000-0000-0000-000000000010','อาคารอำนวยการ · ชั้น 2 · ห้องประชุมใหญ่','ระบบปรับอากาศส่วนกลาง',6,now()-interval '4 months',now()+interval '2 months'),
-  ('80000000-0000-0000-0000-000000000005','20000000-0000-0000-0000-000000000003','อาคารผู้ป่วยใน · ชั้น 3 · หอผู้ป่วยอายุรกรรม','ระบบน้ำประปาหอผู้ป่วย',3,now()-interval '2 months',now()+interval '1 month');
+  ('80000000-0000-0000-0000-000000000001','20000000-0000-0000-0000-000000000007','อาคารผู้ป่วยนอก · ทุกชั้น · โถงลิฟต์ A','ลิฟต์โดยสาร A','ตรวจสอบระบบประตู เบรกฉุกเฉิน สัญญาณเตือน และทดสอบการทำงานทุกชั้น',1,now()-interval '35 days',now()-interval '5 days'),
+  ('80000000-0000-0000-0000-000000000002','20000000-0000-0000-0000-000000000005','อาคารเภสัชกรรม · ชั้น 1 · ห้องเก็บเวชภัณฑ์','เครื่องปรับอากาศควบคุมอุณหภูมิ','ล้างแผงกรอง ตรวจแรงดันน้ำยา และทดสอบการควบคุมอุณหภูมิห้องเก็บเวชภัณฑ์',3,now()-interval '89 days',now()+interval '1 day'),
+  ('80000000-0000-0000-0000-000000000003','20000000-0000-0000-0000-000000000004','อาคารอุบัติเหตุและฉุกเฉิน · ชั้น 1 · หน้าห้องกู้ชีพ','ตู้จ่ายไฟฟ้าฉุกเฉิน','ตรวจความแน่นของจุดต่อสาย วัดความร้อนสะสม และทดสอบไฟฟ้าสำรอง',1,now()-interval '25 days',now()+interval '5 days'),
+  ('80000000-0000-0000-0000-000000000004','20000000-0000-0000-0000-000000000010','อาคารอำนวยการ · ชั้น 2 · ห้องประชุมใหญ่','ระบบปรับอากาศส่วนกลาง','ตรวจชุดควบคุม ทำความสะอาดชุดกรอง และทดสอบการกระจายลมของระบบส่วนกลาง',6,now()-interval '4 months',now()+interval '2 months'),
+  ('80000000-0000-0000-0000-000000000005','20000000-0000-0000-0000-000000000003','อาคารผู้ป่วยใน · ชั้น 3 · หอผู้ป่วยอายุรกรรม','ระบบน้ำประปาหอผู้ป่วย','ตรวจแรงดันน้ำ วาล์ว ระบบระบายน้ำ และจุดเสี่ยงการรั่วซึมในหอผู้ป่วย',3,now()-interval '2 months',now()+interval '1 month');
 
 insert into public.pm_logs (id, schedule_id, completed_at, technician_id, notes)
 values
@@ -271,7 +275,8 @@ values
   ('90000000-0000-0000-0000-000000000003','10000000-0000-0000-0000-000000000003','job_assigned','คุณได้รับมอบหมายงาน ISRI-202608-000003 ตรวจสอบลิฟต์โดยสาร A','30000000-0000-0000-0000-000000000003',false,now()-interval '45 minutes'),
   ('90000000-0000-0000-0000-000000000004','10000000-0000-0000-0000-000000000004','job_assigned','คุณได้รับมอบหมายงาน ISRI-202608-000004 ตรวจสอบเครื่องปรับอากาศห้องเก็บเวชภัณฑ์','30000000-0000-0000-0000-000000000004',true,now()-interval '4 hours'),
   ('90000000-0000-0000-0000-000000000005','10000000-0000-0000-0000-000000000005','job_done','งาน ISRI-202608-000008 ดำเนินการเรียบร้อยและได้รับแต้มแล้ว','30000000-0000-0000-0000-000000000008',true,now()-interval '6 days'),
-  ('90000000-0000-0000-0000-000000000006','10000000-0000-0000-0000-000000000006','job_done','งาน ISRI-202608-000011 ดำเนินการเรียบร้อยและได้รับแต้มแล้ว','30000000-0000-0000-0000-000000000011',false,now()-interval '18 days');
+  ('90000000-0000-0000-0000-000000000006','10000000-0000-0000-0000-000000000006','job_done','งาน ISRI-202608-000011 ดำเนินการเรียบร้อยและได้รับแต้มแล้ว','30000000-0000-0000-0000-000000000011',false,now()-interval '18 days'),
+  ('90000000-0000-0000-0000-000000000007','10000000-0000-0000-0000-000000000005','reward_status','คำขอแลกรางวัล "กระบอกน้ำสเตนเลส ขนาด 500 มล." ได้รับการส่งมอบแล้ว',null,false,now()-interval '5 days');
 
 -- Keep future automatically generated ticket numbers after the seeded range.
 -- The original Cloud project and the reproducible Local baseline use different

@@ -1,15 +1,15 @@
 import {
-  pointsForVerifiedUrgency,
+  requireVerifiedUrgency,
   validateFulfillment,
 } from "../supabase/functions/isri-api/_shared/rewardRules.ts";
 
-Deno.test("คะแนนใช้ระดับที่ผู้จัดสรรยืนยันเท่านั้น", () => {
-  if (pointsForVerifiedUrgency("critical") !== 30) throw new Error("critical");
-  if (pointsForVerifiedUrgency("urgent") !== 20) throw new Error("urgent");
-  if (pointsForVerifiedUrgency("normal") !== 10) throw new Error("normal");
+Deno.test("ระดับความเร่งด่วนต้องเป็นค่าที่ผู้จัดสรรยืนยัน", () => {
+  if (requireVerifiedUrgency("critical") !== "critical") throw new Error("critical");
+  if (requireVerifiedUrgency("urgent") !== "urgent") throw new Error("urgent");
+  if (requireVerifiedUrgency("normal") !== "normal") throw new Error("normal");
   let rejected = false;
   try {
-    pointsForVerifiedUrgency("reported-critical");
+    requireVerifiedUrgency("reported-critical");
   } catch {
     rejected = true;
   }

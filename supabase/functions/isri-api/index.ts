@@ -12,9 +12,9 @@ import {
   allowedCategories,
   allowedRoles,
   allowedSpecialties,
-  isApproved,
-  type ApprovalStatus,
   type AppRole,
+  type ApprovalStatus,
+  isApproved,
   type Profile,
   type Specialty,
 } from "./_shared/types.ts";
@@ -33,32 +33,35 @@ import { SlaRepository } from "./repositories/slaRepository.ts";
 import { PmScheduleRepository } from "./repositories/pmScheduleRepository.ts";
 import { RewardRepository } from "./repositories/rewardRepository.ts";
 import {
-  CampaignRepository,
   type CampaignInput,
+  CampaignRepository,
 } from "./repositories/campaignRepository.ts";
 import { validateWorkOrderAction } from "./services/workOrderWorkflowService.ts";
 import {
-  PmScheduleService,
   parsePmScheduleInput,
+  PmScheduleService,
 } from "./services/pmScheduleService.ts";
 import { validateFulfillment } from "./_shared/rewardRules.ts";
 
 async function requireSession(req: Request) {
   const supabaseUrl = Deno.env.get("SUPABASE_URL");
   const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
-  if (!supabaseUrl || !serviceRoleKey)
+  if (!supabaseUrl || !serviceRoleKey) {
     throw new HttpError("Server configuration is incomplete.", 500);
+  }
   const authorization = req.headers.get("Authorization");
-  if (!authorization?.startsWith("Bearer "))
+  if (!authorization?.startsWith("Bearer ")) {
     throw new HttpError("Authentication is required.", 401);
+  }
   const db = createClient(supabaseUrl, serviceRoleKey, {
     auth: { persistSession: false },
   });
   const { data, error: authError } = await db.auth.getUser(
     authorization.slice("Bearer ".length),
   );
-  if (authError || !data.user)
+  if (authError || !data.user) {
     throw new HttpError("Your session is invalid or has expired.", 401);
+  }
   const profiles = new ProfileRepository(db);
   const profile = await profiles.findById(data.user.id);
   if (!profile) throw new HttpError("User profile was not found.", 403);
@@ -66,31 +69,36 @@ async function requireSession(req: Request) {
 }
 
 function requireApproved(profile: Profile) {
-  if (!isApproved(profile))
+  if (!isApproved(profile)) {
     throw new HttpError("Your account is waiting for approval.", 403);
+  }
 }
 
 function requireAdmin(profile: Profile) {
-  if (!isApproved(profile) || profile.role !== "admin")
+  if (!isApproved(profile) || profile.role !== "admin") {
     throw new HttpError("Administrator access is required.", 403);
+  }
 }
 
 function requireDispatcher(profile: Profile) {
-  if (!isApproved(profile) || profile.role !== "dispatcher")
+  if (!isApproved(profile) || profile.role !== "dispatcher") {
     throw new HttpError("Dispatcher access is required.", 403);
+  }
 }
 
 function requirePmViewer(profile: Profile) {
   if (
     !isApproved(profile) ||
     (profile.role !== "technician" && profile.role !== "admin")
-  )
+  ) {
     throw new HttpError("PM access is required.", 403);
+  }
 }
 
 function requireTechnician(profile: Profile) {
-  if (!isApproved(profile) || profile.role !== "technician")
+  if (!isApproved(profile) || profile.role !== "technician") {
     throw new HttpError("Technician access is required.", 403);
+  }
 }
 
 function hasDatabaseCode(cause: unknown, code: string) {
@@ -105,8 +113,9 @@ function hasDatabaseCode(cause: unknown, code: string) {
 function locationInput(body: Record<string, unknown> | null) {
   const text = (key: string, required = true) => {
     const value = typeof body?.[key] === "string" ? body[key].trim() : "";
-    if ((required && !value) || value.length > 120)
+    if ((required && !value) || value.length > 120) {
       throw new HttpError("Location data is invalid.");
+    }
     return value;
   };
   return {
@@ -120,21 +129,27 @@ function locationInput(body: Record<string, unknown> | null) {
 function slaInput(body: Record<string, unknown> | null) {
   const responseMinutes = Number(body?.responseMinutes);
   const resolveMinutes = Number(body?.resolveMinutes);
+  const pointValue = Number(body?.pointValue);
   if (
     !Number.isInteger(responseMinutes) ||
     !Number.isInteger(resolveMinutes) ||
+    !Number.isInteger(pointValue) ||
     responseMinutes < 1 ||
     resolveMinutes < responseMinutes ||
-    resolveMinutes > 525_600
-  )
-    throw new HttpError("SLA duration is invalid.");
-  return { responseMinutes, resolveMinutes };
+    resolveMinutes > 525_600 ||
+    pointValue < 1 ||
+    pointValue > 1_000_000
+  ) {
+    throw new HttpError("SLA configuration is invalid.");
+  }
+  return { responseMinutes, resolveMinutes, pointValue };
 }
 
 function rewardInput(body: Record<string, unknown> | null) {
   const name = typeof body?.name === "string" ? body.name.trim() : "";
-  const description =
-    typeof body?.description === "string" ? body.description.trim() : "";
+  const description = typeof body?.description === "string"
+    ? body.description.trim()
+    : "";
   const pointCost = Number(body?.pointCost);
   const stock = Number(body?.stock);
   const isActive = body?.isActive === true;
@@ -144,14 +159,18 @@ function rewardInput(body: Record<string, unknown> | null) {
     name.length > 200 ||
     description.length < 2 ||
     description.length > 2000
-  )
+  ) {
     throw new HttpError("Reward details are invalid.");
-  if (!Number.isInteger(pointCost) || pointCost < 1 || pointCost > 1_000_000)
+  }
+  if (!Number.isInteger(pointCost) || pointCost < 1 || pointCost > 1_000_000) {
     throw new HttpError("Reward point cost is invalid.");
-  if (!Number.isInteger(stock) || stock < 0 || stock > 1_000_000)
+  }
+  if (!Number.isInteger(stock) || stock < 0 || stock > 1_000_000) {
     throw new HttpError("Reward stock is invalid.");
-  if (rewardPeriod !== "standard" && rewardPeriod !== "annual")
+  }
+  if (rewardPeriod !== "standard" && rewardPeriod !== "annual") {
     throw new HttpError("Reward period is invalid.");
+  }
   return {
     name,
     description,
@@ -164,10 +183,9 @@ function rewardInput(body: Record<string, unknown> | null) {
 
 function campaignInput(body: Record<string, unknown> | null): CampaignInput {
   const name = typeof body?.name === "string" ? body.name.trim() : "";
-  const prizeDescription =
-    typeof body?.prizeDescription === "string"
-      ? body.prizeDescription.trim()
-      : "";
+  const prizeDescription = typeof body?.prizeDescription === "string"
+    ? body.prizeDescription.trim()
+    : "";
   const periodType = body?.periodType;
   const startDate = typeof body?.startDate === "string" ? body.startDate : "";
   const endDate = typeof body?.endDate === "string" ? body.endDate : "";
@@ -177,16 +195,19 @@ function campaignInput(body: Record<string, unknown> | null): CampaignInput {
     name.length > 200 ||
     prizeDescription.length < 2 ||
     prizeDescription.length > 2000
-  )
+  ) {
     throw new HttpError("Campaign details are invalid.");
+  }
   if (
     periodType !== "monthly" &&
     periodType !== "yearly" &&
     periodType !== "custom"
-  )
+  ) {
     throw new HttpError("Campaign period type is invalid.");
-  if (!isDate(startDate) || !isDate(endDate) || endDate < startDate)
+  }
+  if (!isDate(startDate) || !isDate(endDate) || endDate < startDate) {
     throw new HttpError("Campaign dates are invalid.");
+  }
   return { name, periodType, startDate, endDate, prizeDescription };
 }
 
@@ -221,9 +242,9 @@ Deno.serve(async (req) => {
         ...reward,
         image_url: file
           ? await files.createSignedReadUrl(
-              String(file.bucket),
-              String(file.object_path),
-            )
+            String(file.bucket),
+            String(file.object_path),
+          )
           : null,
       };
     };
@@ -231,19 +252,20 @@ Deno.serve(async (req) => {
     const historyWithActors = async (incidentId: string) => {
       const history = await workOrders.historyForIncident(incidentId);
       const actorIds = history.events.flatMap((event) =>
-        event.changed_by ? [event.changed_by] : [],
+        event.changed_by ? [event.changed_by] : []
       );
-      if (history.workOrder?.technician_id)
+      if (history.workOrder?.technician_id) {
         actorIds.push(history.workOrder.technician_id);
+      }
       const names = await profiles.namesByIds(actorIds);
       const eventIds = history.events.map((event) => event.id);
       const { data: linkedFiles, error: linkedFilesError } = eventIds.length
         ? await db
-            .from("work_order_history_files")
-            .select(
-              "work_order_history_id, files(id, bucket, object_path, file_name, mime_type, size_bytes)",
-            )
-            .in("work_order_history_id", eventIds)
+          .from("work_order_history_files")
+          .select(
+            "work_order_history_id, files(id, bucket, object_path, file_name, mime_type, size_bytes)",
+          )
+          .in("work_order_history_id", eventIds)
         : { data: [], error: null };
       if (linkedFilesError) throw linkedFilesError;
       const filesByEvent = new Map<string, Array<Record<string, unknown>>>();
@@ -257,11 +279,11 @@ Deno.serve(async (req) => {
       return {
         workOrder: history.workOrder
           ? {
-              ...history.workOrder,
-              technician_name: history.workOrder.technician_id
-                ? (names.get(history.workOrder.technician_id) ?? "ไม่ระบุ")
-                : null,
-            }
+            ...history.workOrder,
+            technician_name: history.workOrder.technician_id
+              ? (names.get(history.workOrder.technician_id) ?? "ไม่ระบุ")
+              : null,
+          }
           : null,
         events: await Promise.all(
           history.events.map(async (event) => ({
@@ -285,14 +307,16 @@ Deno.serve(async (req) => {
       };
     };
 
-    if (req.method === "GET" && pathname === "/me")
+    if (req.method === "GET" && pathname === "/me") {
       return json({ data: profile });
+    }
 
     if (req.method === "GET" && pathname === "/dashboard/summary") {
       requireAdmin(profile);
       const month = url.searchParams.get("month") ?? "";
-      if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month))
+      if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) {
         throw new HttpError("Dashboard month is invalid.");
+      }
       return json({ data: await dashboard.summary(month) });
     }
     if (
@@ -302,8 +326,9 @@ Deno.serve(async (req) => {
     ) {
       requireAdmin(profile);
       const month = url.searchParams.get("month") ?? "";
-      if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month))
+      if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) {
         throw new HttpError("Dashboard month is invalid.");
+      }
       return json({ data: await dashboard.getMonthlyReportingCounts(month) });
     }
 
@@ -371,18 +396,23 @@ Deno.serve(async (req) => {
       requireTechnician(profile);
       const body = await parseJson(req);
       const notes = typeof body?.notes === "string" ? body.notes : "";
+      const completedAt = typeof body?.completedAt === "string"
+        ? body.completedAt
+        : "";
       return json({
         data: await pmScheduleService.complete(
           pmCompletionMatch[1],
           profile.id,
+          completedAt,
           notes,
         ),
       });
     }
 
     if (req.method === "GET" && pathname === "/rewards/catalog") {
-      if (!isApproved(profile) || profile.role !== "reporter")
+      if (!isApproved(profile) || profile.role !== "reporter") {
         throw new HttpError("Reporter access is required.", 403);
+      }
       return json({
         data: await Promise.all(
           (await rewards.listCatalog()).map(withRewardImage),
@@ -390,18 +420,22 @@ Deno.serve(async (req) => {
       });
     }
     if (req.method === "GET" && pathname === "/rewards/wallet") {
-      if (!isApproved(profile) || profile.role !== "reporter")
+      if (!isApproved(profile) || profile.role !== "reporter") {
         throw new HttpError("Reporter access is required.", 403);
+      }
       return json({ data: await rewards.listWallet(profile.id) });
     }
     if (req.method === "POST" && pathname === "/rewards/redemptions") {
-      if (!isApproved(profile) || profile.role !== "reporter")
+      if (!isApproved(profile) || profile.role !== "reporter") {
         throw new HttpError("Reporter access is required.", 403);
+      }
       const body = await parseJson(req);
-      const rewardItemId =
-        typeof body?.rewardItemId === "string" ? body.rewardItemId : "";
-      if (!/^[0-9a-f-]{36}$/i.test(rewardItemId))
+      const rewardItemId = typeof body?.rewardItemId === "string"
+        ? body.rewardItemId
+        : "";
+      if (!/^[0-9a-f-]{36}$/i.test(rewardItemId)) {
         throw new HttpError("Reward item is invalid.");
+      }
       let fulfillment;
       try {
         fulfillment = validateFulfillment({
@@ -443,12 +477,15 @@ Deno.serve(async (req) => {
       requireAdmin(profile);
       const body = await parseJson(req);
       const status = body?.status;
-      const note =
-        typeof body?.note === "string" ? body.note.trim() || null : null;
-      if (status !== "fulfilled" && status !== "cancelled")
+      const note = typeof body?.note === "string"
+        ? body.note.trim() || null
+        : null;
+      if (status !== "fulfilled" && status !== "cancelled") {
         throw new HttpError("Redemption status is invalid.");
-      if (note && note.length > 500)
+      }
+      if (note && note.length > 500) {
         throw new HttpError("Administrator note is too long.");
+      }
       return json({
         data: await rewards.updateRedemptionStatus({
           id: redemptionStatusMatch[1],
@@ -488,8 +525,9 @@ Deno.serve(async (req) => {
       requireAdmin(profile);
       const body = await parseJson(req);
       const image = body?.image;
-      if (!FileRepository.validateRewardImage(image, profile.id))
+      if (!FileRepository.validateRewardImage(image, profile.id)) {
         throw new HttpError("Reward image is required.");
+      }
       const file = await files.createRewardImageRecord({
         ...image,
         userId: profile.id,
@@ -513,11 +551,11 @@ Deno.serve(async (req) => {
       const image = body?.image;
       const imageFileId = FileRepository.validateRewardImage(image, profile.id)
         ? (
-            await files.createRewardImageRecord({
-              ...image,
-              userId: profile.id,
-            })
-          ).id
+          await files.createRewardImageRecord({
+            ...image,
+            userId: profile.id,
+          })
+        ).id
         : undefined;
       const reward = await rewards.update(rewardMatch[1], {
         ...rewardInput(body),
@@ -573,11 +611,12 @@ Deno.serve(async (req) => {
     if (req.method === "POST" && campaignCloseMatch) {
       requireAdmin(profile);
       const campaign = await campaigns.close(campaignCloseMatch[1]);
-      if (!campaign)
+      if (!campaign) {
         throw new HttpError(
           "Campaign is already locked or was not found.",
           409,
         );
+      }
       return json({ data: campaign });
     }
     if (req.method === "PATCH" && campaignMatch) {
@@ -586,8 +625,9 @@ Deno.serve(async (req) => {
         campaignMatch[1],
         campaignInput(await parseJson(req)),
       );
-      if (!campaign)
+      if (!campaign) {
         throw new HttpError("Only an active campaign can be edited.", 409);
+      }
       return json({ data: campaign });
     }
 
@@ -604,30 +644,32 @@ Deno.serve(async (req) => {
         notificationMatch[1],
         profile.id,
       );
-      if (!notification)
+      if (!notification) {
         throw new HttpError("Notification was not found.", 404);
+      }
       return json({ data: notification });
     }
 
     if (req.method === "PATCH" && pathname === "/me/onboarding") {
       const body = await parseJson(req);
-      const requestedPosition =
-        typeof body?.requestedPosition === "string"
-          ? body.requestedPosition.trim()
-          : "";
+      const requestedPosition = typeof body?.requestedPosition === "string"
+        ? body.requestedPosition.trim()
+        : "";
       const specialties = Array.isArray(body?.technicianSpecialties)
         ? body.technicianSpecialties
         : [];
-      if (requestedPosition.length < 2 || requestedPosition.length > 120)
+      if (requestedPosition.length < 2 || requestedPosition.length > 120) {
         throw new HttpError(
           "Requested position must contain 2–120 characters.",
         );
+      }
       if (
         !specialties.every((value: unknown) =>
-          allowedSpecialties.has(value as Specialty),
+          allowedSpecialties.has(value as Specialty)
         )
-      )
+      ) {
         throw new HttpError("One or more technician specialties are invalid.");
+      }
       return json({
         data: await profiles.updateOnboarding(
           profile.id,
@@ -683,11 +725,12 @@ Deno.serve(async (req) => {
     }
 
     if (req.method === "POST" && pathname === "/uploads/incident-attachments") {
-      if (!isApproved(profile) || profile.role !== "reporter")
+      if (!isApproved(profile) || profile.role !== "reporter") {
         throw new HttpError(
           "Only approved reporters can upload incident attachments.",
           403,
         );
+      }
       const body = await parseJson(req);
       try {
         return json({
@@ -708,11 +751,12 @@ Deno.serve(async (req) => {
       req.method === "POST" &&
       pathname === "/uploads/work-order-attachments"
     ) {
-      if (!isApproved(profile) || profile.role !== "technician")
+      if (!isApproved(profile) || profile.role !== "technician") {
         throw new HttpError(
           "Only approved technicians can upload work order attachments.",
           403,
         );
+      }
       const body = await parseJson(req);
       try {
         return json({
@@ -730,8 +774,9 @@ Deno.serve(async (req) => {
     }
 
     if (req.method === "GET" && pathname === "/incidents/mine") {
-      if (!isApproved(profile) || profile.role !== "reporter")
+      if (!isApproved(profile) || profile.role !== "reporter") {
         throw new HttpError("Reporter access is required.", 403);
+      }
       return json({ data: await incidents.listForReporter(profile.id) });
     }
     if (req.method === "GET" && pathname === "/dispatch/incidents") {
@@ -751,27 +796,23 @@ Deno.serve(async (req) => {
         detail.fileLinks as unknown as Array<{
           files:
             | {
-                bucket: string;
-                object_path: string;
-                file_name: string;
-                mime_type: string;
-                size_bytes: number;
-              }
+              bucket: string;
+              object_path: string;
+              file_name: string;
+              mime_type: string;
+              size_bytes: number;
+            }
             | Array<{
-                bucket: string;
-                object_path: string;
-                file_name: string;
-                mime_type: string;
-                size_bytes: number;
-              }>
+              bucket: string;
+              object_path: string;
+              file_name: string;
+              mime_type: string;
+              size_bytes: number;
+            }>
             | null;
         }>
       ).flatMap((link) =>
-        !link.files
-          ? []
-          : Array.isArray(link.files)
-            ? link.files
-            : [link.files],
+        !link.files ? [] : Array.isArray(link.files) ? link.files : [link.files]
       );
       const attachments = await Promise.all(
         linkedFiles.map(async (file) => ({
@@ -787,6 +828,10 @@ Deno.serve(async (req) => {
       requireDispatcher(profile);
       return json({ data: await profiles.listApprovedByRole("technician") });
     }
+    if (req.method === "GET" && pathname === "/dispatch/sla-rules") {
+      requireDispatcher(profile);
+      return json({ data: await sla.listRules() });
+    }
     if (req.method === "GET" && pathname === "/dispatch/reviews") {
       requireDispatcher(profile);
       return json({
@@ -799,24 +844,30 @@ Deno.serve(async (req) => {
     if (req.method === "POST" && pathname === "/dispatch/work-orders") {
       requireDispatcher(profile);
       const body = await parseJson(req);
-      const incidentId =
-        typeof body?.incidentId === "string" ? body.incidentId : "";
-      const technicianId =
-        typeof body?.technicianId === "string" ? body.technicianId : "";
-      const urgencyVerified =
-        typeof body?.urgencyVerified === "string" ? body.urgencyVerified : "";
-      if (!["critical", "urgent", "normal"].includes(urgencyVerified))
+      const incidentId = typeof body?.incidentId === "string"
+        ? body.incidentId
+        : "";
+      const technicianId = typeof body?.technicianId === "string"
+        ? body.technicianId
+        : "";
+      const urgencyVerified = typeof body?.urgencyVerified === "string"
+        ? body.urgencyVerified
+        : "";
+      if (!["critical", "urgent", "normal"].includes(urgencyVerified)) {
         throw new HttpError("Verified urgency is required.");
+      }
       const incident = await incidents.findForDispatch(incidentId);
-      if (!incident)
+      if (!incident) {
         throw new HttpError("Incident is not available for assignment.", 404);
+      }
       const technician = await profiles.findById(technicianId);
       if (
         !technician ||
         !isApproved(technician) ||
         technician.role !== "technician"
-      )
+      ) {
         throw new HttpError("Technician was not found.", 404);
+      }
       const sla = await workOrders.getSlaRule(urgencyVerified);
       if (!sla) throw new HttpError("SLA rule was not configured.", 409);
       const { data, error: assignmentError } = await db.rpc(
@@ -830,13 +881,15 @@ Deno.serve(async (req) => {
       );
       if (assignmentError) throw assignmentError;
       const assigned = Array.isArray(data) ? data[0] : data;
-      if (!assigned)
+      if (!assigned) {
         throw new HttpError("Incident is not available for assignment.", 409);
+      }
       return json({ data: assigned }, 201);
     }
     if (req.method === "GET" && pathname === "/work-orders/mine") {
-      if (!isApproved(profile) || profile.role !== "technician")
+      if (!isApproved(profile) || profile.role !== "technician") {
         throw new HttpError("Technician access is required.", 403);
+      }
       return json({ data: await workOrders.listForTechnician(profile.id) });
     }
     const workOrderDetailMatch = pathname.match(
@@ -846,8 +899,9 @@ Deno.serve(async (req) => {
       if (
         !isApproved(profile) ||
         !["technician", "dispatcher"].includes(profile.role ?? "")
-      )
+      ) {
         throw new HttpError("Work order access is required.", 403);
+      }
       const actorRole = profile.role as "technician" | "dispatcher";
       const workOrder = await workOrders.getByIdForActor(
         workOrderDetailMatch[1],
@@ -871,8 +925,9 @@ Deno.serve(async (req) => {
         profile.role === "technician" || profile.role === "dispatcher"
           ? profile.role
           : null;
-      if (!isApproved(profile) || !actorRole)
+      if (!isApproved(profile) || !actorRole) {
         throw new HttpError("Work order access is required.", 403);
+      }
       const workOrder = await workOrders.getForAction(
         workOrderActionMatch[1],
         profile.id,
@@ -891,25 +946,39 @@ Deno.serve(async (req) => {
       if (
         attachments.length > 3 ||
         !attachments.every((file: unknown) =>
-          FileRepository.validateWorkOrderAttachment(file, profile.id),
+          FileRepository.validateWorkOrderAttachment(file, profile.id)
         )
-      )
+      ) {
         throw new HttpError("Work order attachments are invalid.");
+      }
       if (
         attachments.length &&
         !["request_parts", "submit_repair"].includes(action.action)
-      )
+      ) {
         throw new HttpError(
           "Attachments are only accepted with a parts request or repair submission.",
         );
-      const result = await workOrders.applyAction(workOrder.id, {
-        status: action.transition.to,
-        actorId: profile.id,
-        note: action.note,
-        eventType: action.transition.eventType,
-        incidentStatus: action.transition.incidentStatus,
-        attachments: attachments as WorkOrderAttachment[],
-      });
+      }
+      let result;
+      try {
+        result = await workOrders.applyAction(workOrder.id, {
+          expectedStatus: workOrder.status,
+          status: action.transition.to,
+          actorId: profile.id,
+          note: action.note,
+          eventType: action.transition.eventType,
+          incidentStatus: action.transition.incidentStatus,
+          attachments: attachments as WorkOrderAttachment[],
+        });
+      } catch (cause) {
+        if (hasDatabaseCode(cause, "P0001")) {
+          throw new HttpError(
+            "สถานะของใบงานถูกเปลี่ยนแล้ว กรุณาเปิดข้อมูลล่าสุดก่อนดำเนินการอีกครั้ง.",
+            409,
+          );
+        }
+        throw cause;
+      }
       return json({ data: result });
     }
     const incidentMatch = pathname.match(/^\/incidents\/([0-9a-f-]{36})$/i);
@@ -917,8 +986,9 @@ Deno.serve(async (req) => {
       /^\/incidents\/([0-9a-f-]{36})\/history$/i,
     );
     if (req.method === "GET" && incidentHistoryMatch) {
-      if (!isApproved(profile) || profile.role !== "reporter")
+      if (!isApproved(profile) || profile.role !== "reporter") {
         throw new HttpError("Reporter access is required.", 403);
+      }
       const incident = await incidents.findForReporter(
         incidentHistoryMatch[1],
         profile.id,
@@ -927,8 +997,9 @@ Deno.serve(async (req) => {
       return json({ data: await historyWithActors(incidentHistoryMatch[1]) });
     }
     if (req.method === "GET" && incidentMatch) {
-      if (!isApproved(profile) || profile.role !== "reporter")
+      if (!isApproved(profile) || profile.role !== "reporter") {
         throw new HttpError("Reporter access is required.", 403);
+      }
       const detail = await incidents.findForReporter(
         incidentMatch[1],
         profile.id,
@@ -938,27 +1009,23 @@ Deno.serve(async (req) => {
         detail.fileLinks as unknown as Array<{
           files:
             | {
-                bucket: string;
-                object_path: string;
-                file_name: string;
-                mime_type: string;
-                size_bytes: number;
-              }
+              bucket: string;
+              object_path: string;
+              file_name: string;
+              mime_type: string;
+              size_bytes: number;
+            }
             | Array<{
-                bucket: string;
-                object_path: string;
-                file_name: string;
-                mime_type: string;
-                size_bytes: number;
-              }>
+              bucket: string;
+              object_path: string;
+              file_name: string;
+              mime_type: string;
+              size_bytes: number;
+            }>
             | null;
         }>
       ).flatMap((link) =>
-        !link.files
-          ? []
-          : Array.isArray(link.files)
-            ? link.files
-            : [link.files],
+        !link.files ? [] : Array.isArray(link.files) ? link.files : [link.files]
       );
       const attachments = await Promise.all(
         linkedFiles.map(async (file) => ({
@@ -971,38 +1038,44 @@ Deno.serve(async (req) => {
       return json({ data: { ...detail.incident, attachments } });
     }
     if (req.method === "POST" && pathname === "/incidents") {
-      if (!isApproved(profile) || profile.role !== "reporter")
+      if (!isApproved(profile) || profile.role !== "reporter") {
         throw new HttpError(
           "Only approved reporters can create an incident.",
           403,
         );
+      }
       const body = await parseJson(req);
-      const locationId =
-        typeof body?.locationId === "string" ? body.locationId : "";
-      const categoryInput =
-        typeof body?.category === "string" ? body.category.trim() : "";
-      const category =
-        categoryByCode[categoryInput] ??
+      const locationId = typeof body?.locationId === "string"
+        ? body.locationId
+        : "";
+      const categoryInput = typeof body?.category === "string"
+        ? body.category.trim()
+        : "";
+      const category = categoryByCode[categoryInput] ??
         (allowedCategories.has(categoryInput) ? categoryInput : "");
-      const urgencyReported =
-        typeof body?.urgencyReported === "string" ? body.urgencyReported : "";
-      const description =
-        typeof body?.description === "string" ? body.description.trim() : "";
-      const assetName =
-        typeof body?.assetName === "string"
-          ? body.assetName.trim() || null
-          : null;
+      const urgencyReported = typeof body?.urgencyReported === "string"
+        ? body.urgencyReported
+        : "";
+      const description = typeof body?.description === "string"
+        ? body.description.trim()
+        : "";
+      const assetName = typeof body?.assetName === "string"
+        ? body.assetName.trim() || null
+        : null;
       const attachments: unknown[] = Array.isArray(body?.attachments)
         ? body.attachments
         : [];
       const invalidFields: string[] = [];
-      if (!/^[0-9a-f-]{36}$/i.test(locationId))
+      if (!/^[0-9a-f-]{36}$/i.test(locationId)) {
         invalidFields.push("ตำแหน่งจาก QR Code");
+      }
       if (!allowedCategories.has(category)) invalidFields.push("ประเภทปัญหา");
-      if (!["critical", "urgent", "normal"].includes(urgencyReported))
+      if (!["critical", "urgent", "normal"].includes(urgencyReported)) {
         invalidFields.push("ระดับความเร่งด่วน");
-      if (description.length < 5 || description.length > 4000)
+      }
+      if (description.length < 5 || description.length > 4000) {
         invalidFields.push("รายละเอียดปัญหา");
+      }
       if (invalidFields.length) {
         console.warn("Incident validation failed", {
           invalidFields,
@@ -1018,24 +1091,27 @@ Deno.serve(async (req) => {
       if (
         attachments.length > 3 ||
         !attachments.every((file: unknown) =>
-          FileRepository.validateIncidentAttachment(file, profile.id),
+          FileRepository.validateIncidentAttachment(file, profile.id)
         )
-      )
+      ) {
         throw new HttpError("Incident attachments are invalid.");
+      }
       const location = await locations.findById(locationId);
       if (!location) throw new HttpError("Location was not found.", 404);
-      if (await incidents.findActiveForLocation(locationId))
+      if (await incidents.findActiveForLocation(locationId)) {
         throw new HttpError(
           "This QR location already has an incident in progress.",
           409,
         );
+      }
       return json(
         {
           data: await (async () => {
             try {
               return await incidents.create({
                 locationId,
-                locationLabel: `${location.building} · ${location.floor} · ${location.zone}`,
+                locationLabel:
+                  `${location.building} · ${location.floor} · ${location.zone}`,
                 assetName,
                 category,
                 urgencyReported,
@@ -1044,11 +1120,12 @@ Deno.serve(async (req) => {
                 attachments: attachments as IncidentAttachment[],
               });
             } catch (cause) {
-              if (hasDatabaseCode(cause, "23505"))
+              if (hasDatabaseCode(cause, "23505")) {
                 throw new HttpError(
                   "This QR location already has an incident in progress.",
                   409,
                 );
+              }
               throw cause;
             }
           })(),
@@ -1061,8 +1138,8 @@ Deno.serve(async (req) => {
       requireAdmin(profile);
       const requestedStatus = url.searchParams.get("approvalStatus");
       const approvalStatus = ["pending", "approved", "rejected"].includes(
-        requestedStatus ?? "",
-      )
+          requestedStatus ?? "",
+        )
         ? (requestedStatus as ApprovalStatus)
         : null;
       return json({ data: await profiles.list(approvalStatus) });
@@ -1081,8 +1158,9 @@ Deno.serve(async (req) => {
           (id: unknown) =>
             typeof id === "string" && /^[0-9a-f-]{36}$/i.test(id),
         )
-      )
+      ) {
         throw new HttpError("Select between 1 and 200 valid users.");
+      }
       return json({
         data: {
           approvedCount: await profiles.bulkApproveReporters(
@@ -1103,26 +1181,32 @@ Deno.serve(async (req) => {
       const specialties = Array.isArray(body?.technicianSpecialties)
         ? body.technicianSpecialties
         : [];
-      const note =
-        typeof body?.note === "string" ? body.note.trim() || null : null;
+      const note = typeof body?.note === "string"
+        ? body.note.trim() || null
+        : null;
       if (
         !(["pending", "approved", "rejected"] as string[]).includes(
           approvalStatus,
         )
-      )
+      ) {
         throw new HttpError("Approval status is invalid.");
-      if (approvalMatch[1] === profile.id)
+      }
+      if (approvalMatch[1] === profile.id) {
         throw new HttpError("You cannot change your own access.", 409);
-      if (approvalStatus === "approved" && !allowedRoles.has(role as AppRole))
+      }
+      if (approvalStatus === "approved" && !allowedRoles.has(role as AppRole)) {
         throw new HttpError("A valid role is required for approval.");
+      }
       if (
         !specialties.every((value: unknown) =>
-          allowedSpecialties.has(value as Specialty),
+          allowedSpecialties.has(value as Specialty)
         )
-      )
+      ) {
         throw new HttpError("One or more technician specialties are invalid.");
-      const actualRole =
-        approvalStatus === "approved" ? (role as AppRole) : null;
+      }
+      const actualRole = approvalStatus === "approved"
+        ? (role as AppRole)
+        : null;
       return json({
         data: await profiles.setApproval({
           id: approvalMatch[1],

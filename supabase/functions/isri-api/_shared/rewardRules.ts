@@ -1,16 +1,10 @@
 export type Urgency = "critical" | "urgent" | "normal";
 export type FulfillmentMethod = "pickup" | "delivery";
 
-export const verifiedUrgencyPoints: Record<Urgency, number> = {
-  critical: 30,
-  urgent: 20,
-  normal: 10,
-};
-
-export function pointsForVerifiedUrgency(value: unknown): number {
+export function requireVerifiedUrgency(value: unknown): Urgency {
   if (value !== "critical" && value !== "urgent" && value !== "normal")
     throw new Error("Verified urgency is required.");
-  return verifiedUrgencyPoints[value];
+  return value;
 }
 
 export function validateFulfillment(input: {

@@ -2,6 +2,7 @@ export type WorkOrderAction =
   | "accept_work"
   | "request_parts"
   | "approve_parts"
+  | "reject_parts"
   | "confirm_parts_received"
   | "submit_repair"
   | "approve_repair"
@@ -41,6 +42,13 @@ export const workflowTransitions: Record<
     to: "waiting_parts",
     incidentStatus: "waiting_parts",
     eventType: "status_change",
+  },
+  reject_parts: {
+    actor: "dispatcher",
+    from: ["pending_parts_approval"],
+    to: "in_progress",
+    incidentStatus: "in_progress",
+    eventType: "repair_note",
   },
   confirm_parts_received: {
     actor: "technician",

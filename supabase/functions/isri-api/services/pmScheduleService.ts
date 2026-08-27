@@ -5,6 +5,7 @@ import { PmScheduleRepository } from "../repositories/pmScheduleRepository.ts";
 type PmScheduleInput = {
   locationId: string;
   assetName: string;
+  planDetails: string;
   intervalMonths: number;
   lastDoneAt: string;
 };
@@ -22,6 +23,8 @@ export function parsePmScheduleInput(
     typeof body?.locationId === "string" ? body.locationId : "";
   const assetName =
     typeof body?.assetName === "string" ? body.assetName.trim() : "";
+  const planDetails =
+    typeof body?.planDetails === "string" ? body.planDetails.trim() : "";
   const intervalMonths = Number(body?.intervalMonths);
   const lastDoneAt =
     typeof body?.lastDoneAt === "string" ? body.lastDoneAt : "";
@@ -31,6 +34,8 @@ export function parsePmScheduleInput(
     throw new HttpError("PM location is invalid.");
   if (assetName.length < 2 || assetName.length > 200)
     throw new HttpError("PM asset name must contain 2–200 characters.");
+  if (planDetails.length < 10 || planDetails.length > 2000)
+    throw new HttpError("PM plan details must contain 10–2,000 characters.");
   if (
     !Number.isInteger(intervalMonths) ||
     intervalMonths < 1 ||
@@ -43,6 +48,7 @@ export function parsePmScheduleInput(
   return {
     locationId,
     assetName,
+    planDetails,
     intervalMonths,
     lastDoneAt: completedDate.toISOString(),
   };
@@ -55,24 +61,35 @@ export class PmScheduleService {
   ) {}
 
   async create(input: PmScheduleInput) {
+    await this.ensureScheduleIsUnique(input);
     return this.save(input);
   }
 
   async update(id: string, input: PmScheduleInput) {
+    await this.ensureScheduleIsUnique(input, id);
     const values = await this.buildValues(input);
     return this.schedules.update(id, values);
   }
 
-  async complete(scheduleId: string, technicianId: string, notes: string) {
+  async complete(
+    scheduleId: string,
+    technicianId: string,
+    completedAt: string,
+    notes: string,
+  ) {
     const schedule = await this.schedules.findSchedule(scheduleId);
     if (!schedule) throw new HttpError("PM schedule was not found.", 404);
     const normalizedNotes = notes.trim();
+    const completedDate = new Date(completedAt);
     if (normalizedNotes.length < 10 || normalizedNotes.length > 4000)
       throw new HttpError("PM notes must contain 10–4,000 characters.");
+    if (Number.isNaN(completedDate.getTime()) || completedDate > new Date())
+      throw new HttpError("PM completion date is invalid.");
 
     const log = await this.schedules.recordCompletion({
       scheduleId,
       technicianId,
+      completedAt: completedDate.toISOString(),
       notes: normalizedNotes,
     });
     const updatedSchedule = await this.schedules.findSchedule(scheduleId);
@@ -83,6 +100,23 @@ export class PmScheduleService {
 
   private async save(input: PmScheduleInput) {
     return this.schedules.create(await this.buildValues(input));
+  }
+
+  private async ensureScheduleIsUnique(
+    input: PmScheduleInput,
+    excludeId?: string,
+  ) {
+    const existing = await this.schedules.findByLocationAndAsset(
+      input.locationId,
+      input.assetName,
+      excludeId,
+    );
+    if (existing) {
+      throw new HttpError(
+        "PM plan for this location and asset already exists.",
+        409,
+      );
+    }
   }
 
   private async buildValues(input: PmScheduleInput) {

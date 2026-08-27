@@ -6,7 +6,11 @@ export class NotificationRepository {
   async createMany(
     userIds: string[],
     input: {
-      type: "new_assignment_pending" | "job_assigned" | "job_done";
+      type:
+        | "new_assignment_pending"
+        | "job_assigned"
+        | "job_done"
+        | "reward_status";
       message: string;
       incidentId: string;
     },

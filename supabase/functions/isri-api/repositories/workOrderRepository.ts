@@ -6,7 +6,7 @@ export class WorkOrderRepository {
   async getSlaRule(urgency: string) {
     const { data, error } = await this.db
       .from("sla_rules")
-      .select("response_minutes, resolve_minutes")
+      .select("response_minutes, resolve_minutes, point_value")
       .eq("urgency_level", urgency)
       .maybeSingle();
     if (error) throw error;
@@ -20,6 +20,7 @@ export class WorkOrderRepository {
     incidentCreatedAt: string;
     responseMinutes: number;
     resolveMinutes: number;
+    pointValue: number;
   }) {
     const start = new Date(input.incidentCreatedAt).getTime();
     const assignedAt = new Date().toISOString();
@@ -37,6 +38,7 @@ export class WorkOrderRepository {
         resolve_due_at: new Date(
           start + input.resolveMinutes * 60000,
         ).toISOString(),
+        sla_point_value: input.pointValue,
       })
       .select(
         "id, incident_id, technician_id, status, assigned_by, assigned_at, respond_due_at, resolve_due_at, created_at",
@@ -86,6 +88,7 @@ export class WorkOrderRepository {
   async applyAction(
     id: string,
     input: {
+      expectedStatus: string;
       status: string;
       actorId: string;
       note: string | null;
@@ -101,6 +104,7 @@ export class WorkOrderRepository {
   ) {
     const { data, error } = await this.db.rpc("apply_work_order_action", {
       p_work_order_id: id,
+      p_expected_status: input.expectedStatus,
       p_status: input.status,
       p_actor_id: input.actorId,
       p_note: input.note,

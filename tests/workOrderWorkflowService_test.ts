@@ -1,11 +1,13 @@
 import { HttpError } from "../supabase/functions/isri-api/_shared/http.ts";
+import { workflowTransitions } from "../supabase/functions/isri-api/_shared/workOrderWorkflow.ts";
 import { validateWorkOrderAction } from "../supabase/functions/isri-api/services/workOrderWorkflowService.ts";
 
 function assertEquals<T>(actual: T, expected: T) {
-  if (actual !== expected)
+  if (actual !== expected) {
     throw new Error(
       `Expected ${String(expected)}, received ${String(actual)}.`,
     );
+  }
 }
 
 function assertThrows(
@@ -66,6 +68,14 @@ Deno.test(
     });
     assertEquals(approvedParts.transition.to, "waiting_parts");
 
+    const rejectedParts = validateWorkOrderAction({
+      action: "reject_parts",
+      actorRole: "dispatcher",
+      currentStatus: "pending_parts_approval",
+      note: "รายการอะไหล่ยังไม่เพียงพอสำหรับอนุมัติ",
+    });
+    assertEquals(rejectedParts.transition.to, "in_progress");
+
     const returned = validateWorkOrderAction({
       action: "return_for_rework",
       actorRole: "dispatcher",
@@ -108,5 +118,67 @@ Deno.test(
       currentStatus: "in_progress",
       note: "   ",
     });
+    invalid({
+      action: "reject_parts",
+      actorRole: "dispatcher",
+      currentStatus: "pending_parts_approval",
+      note: "   ",
+    });
   },
 );
+
+Deno.test("workflow mapping keeps the incident and work-order status aligned", () => {
+  const expected = {
+    accept_work: ["technician", "pending", "in_progress", "in_progress"],
+    request_parts: [
+      "technician",
+      "in_progress",
+      "pending_parts_approval",
+      "pending_parts_approval",
+    ],
+    approve_parts: [
+      "dispatcher",
+      "pending_parts_approval",
+      "waiting_parts",
+      "waiting_parts",
+    ],
+    reject_parts: [
+      "dispatcher",
+      "pending_parts_approval",
+      "in_progress",
+      "in_progress",
+    ],
+    confirm_parts_received: [
+      "technician",
+      "waiting_parts",
+      "in_progress",
+      "in_progress",
+    ],
+    submit_repair: [
+      "technician",
+      "in_progress",
+      "pending_repair_approval",
+      "pending_repair_approval",
+    ],
+    approve_repair: ["dispatcher", "pending_repair_approval", "done", "done"],
+    return_for_rework: [
+      "dispatcher",
+      "pending_repair_approval",
+      "in_progress",
+      "in_progress",
+    ],
+  } as const;
+
+  for (
+    const [action, [actor, from, to, incidentStatus]] of Object.entries(
+      expected,
+    )
+  ) {
+    const transition =
+      workflowTransitions[action as keyof typeof workflowTransitions];
+    assertEquals(transition.actor, actor);
+    assertEquals(transition.from[0], from);
+    assertEquals(transition.to, to);
+    assertEquals(transition.incidentStatus, incidentStatus);
+  }
+});
