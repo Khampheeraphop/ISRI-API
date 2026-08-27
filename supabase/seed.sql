@@ -9,11 +9,16 @@ begin;
 -- ---------------------------------------------------------------------------
 -- 1. System configuration
 -- ---------------------------------------------------------------------------
--- The real owner signs in with Google. Never add a known password for this
--- Gmail account to seed data. The bootstrap trigger promotes the matching
--- verified Auth account on its first sign-in.
+-- Production Google role map (created from Google on first sign-in; never
+-- insert Google users into auth.users here):
+--   khampheeraphop.thon@gmail.com            = administrator
+--   khampheeraphop.thon@northbkk.ac.th       = dispatcher
+--   poplowplay5@gmail.com                    = technician
+--   poplowplay1@gmail.com                    = reporter
+-- Only the administrator is bootstrapped automatically. The other three
+-- accounts must be approved by an administrator after their first sign-in.
 insert into public.bootstrap_admins (email, display_name)
-values ('poplowplay1@gmail.com', 'ผู้ดูแลระบบหลัก')
+values ('khampheeraphop.thon@gmail.com', 'ผู้ดูแลระบบหลัก')
 on conflict (email) do update set display_name = excluded.display_name;
 
 insert into public.sla_rules (urgency_level, response_minutes, resolve_minutes, point_value)
