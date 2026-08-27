@@ -1053,9 +1053,11 @@ Deno.serve(async (req) => {
         : "";
       const category = categoryByCode[categoryInput] ??
         (allowedCategories.has(categoryInput) ? categoryInput : "");
-      const urgencyReported = typeof body?.urgencyReported === "string"
-        ? body.urgencyReported
-        : "";
+      // The reporter does not classify SLA urgency.  It is deliberately
+      // assigned only by the dispatcher at work-order assignment time.
+      // This compatibility value satisfies the current non-null database
+      // column and is never used for deadlines, points, or final priority.
+      const urgencyReported = "normal";
       const description = typeof body?.description === "string"
         ? body.description.trim()
         : "";
@@ -1070,9 +1072,6 @@ Deno.serve(async (req) => {
         invalidFields.push("ตำแหน่งจาก QR Code");
       }
       if (!allowedCategories.has(category)) invalidFields.push("ประเภทปัญหา");
-      if (!["critical", "urgent", "normal"].includes(urgencyReported)) {
-        invalidFields.push("ระดับความเร่งด่วน");
-      }
       if (description.length < 5 || description.length > 4000) {
         invalidFields.push("รายละเอียดปัญหา");
       }
@@ -1081,7 +1080,6 @@ Deno.serve(async (req) => {
           invalidFields,
           hasLocationId: Boolean(locationId),
           category: categoryInput,
-          urgencyReported,
           descriptionLength: description.length,
         });
         throw new HttpError(
