@@ -147,9 +147,8 @@ function slaInput(body: Record<string, unknown> | null) {
 
 function rewardInput(body: Record<string, unknown> | null) {
   const name = typeof body?.name === "string" ? body.name.trim() : "";
-  const description = typeof body?.description === "string"
-    ? body.description.trim()
-    : "";
+  const description =
+    typeof body?.description === "string" ? body.description.trim() : "";
   const pointCost = Number(body?.pointCost);
   const stock = Number(body?.stock);
   const isActive = body?.isActive === true;
@@ -183,9 +182,10 @@ function rewardInput(body: Record<string, unknown> | null) {
 
 function campaignInput(body: Record<string, unknown> | null): CampaignInput {
   const name = typeof body?.name === "string" ? body.name.trim() : "";
-  const prizeDescription = typeof body?.prizeDescription === "string"
-    ? body.prizeDescription.trim()
-    : "";
+  const prizeDescription =
+    typeof body?.prizeDescription === "string"
+      ? body.prizeDescription.trim()
+      : "";
   const periodType = body?.periodType;
   const startDate = typeof body?.startDate === "string" ? body.startDate : "";
   const endDate = typeof body?.endDate === "string" ? body.endDate : "";
@@ -221,10 +221,10 @@ const categoryByCode: Record<string, string> = {
 };
 
 const specialtyForCategory: Record<string, Specialty | undefined> = {
-  "ไฟฟ้า": "electrical",
-  "ประปา": "plumbing",
-  "เครื่องปรับอากาศ": "air_conditioning",
-  "ลิฟต์": "elevator",
+  ไฟฟ้า: "electrical",
+  ประปา: "plumbing",
+  เครื่องปรับอากาศ: "air_conditioning",
+  ลิฟต์: "elevator",
   "โครงสร้าง/พื้นผิวอาคาร (ผนัง พื้น เพดาน ประตู)": "building",
 };
 
@@ -251,9 +251,9 @@ Deno.serve(async (req) => {
         ...reward,
         image_url: file
           ? await files.createSignedReadUrl(
-            String(file.bucket),
-            String(file.object_path),
-          )
+              String(file.bucket),
+              String(file.object_path),
+            )
           : null,
       };
     };
@@ -261,7 +261,7 @@ Deno.serve(async (req) => {
     const historyWithActors = async (incidentId: string) => {
       const history = await workOrders.historyForIncident(incidentId);
       const actorIds = history.events.flatMap((event) =>
-        event.changed_by ? [event.changed_by] : []
+        event.changed_by ? [event.changed_by] : [],
       );
       const assignees = history.workOrder?.assignees ?? [];
       actorIds.push(...assignees.map((assignee) => assignee.technician_id));
@@ -269,11 +269,11 @@ Deno.serve(async (req) => {
       const eventIds = history.events.map((event) => event.id);
       const { data: linkedFiles, error: linkedFilesError } = eventIds.length
         ? await db
-          .from("work_order_history_files")
-          .select(
-            "work_order_history_id, files(id, bucket, object_path, file_name, mime_type, size_bytes)",
-          )
-          .in("work_order_history_id", eventIds)
+            .from("work_order_history_files")
+            .select(
+              "work_order_history_id, files(id, bucket, object_path, file_name, mime_type, size_bytes)",
+            )
+            .in("work_order_history_id", eventIds)
         : { data: [], error: null };
       if (linkedFilesError) throw linkedFilesError;
       const filesByEvent = new Map<string, Array<Record<string, unknown>>>();
@@ -287,16 +287,16 @@ Deno.serve(async (req) => {
       return {
         workOrder: history.workOrder
           ? {
-            ...history.workOrder,
-            technician_name: history.workOrder.technician_id
-              ? (names.get(history.workOrder.technician_id) ?? "ไม่ระบุ")
-              : null,
-            support_technician_names: assignees
-              .filter((assignee) => assignee.assignment_role === "support")
-              .map((assignee) =>
-                names.get(assignee.technician_id) ?? "ไม่ระบุ"
-              ),
-          }
+              ...history.workOrder,
+              technician_name: history.workOrder.technician_id
+                ? (names.get(history.workOrder.technician_id) ?? "ไม่ระบุ")
+                : null,
+              support_technician_names: assignees
+                .filter((assignee) => assignee.assignment_role === "support")
+                .map(
+                  (assignee) => names.get(assignee.technician_id) ?? "ไม่ระบุ",
+                ),
+            }
           : null,
         events: await Promise.all(
           history.events.map(async (event) => ({
@@ -409,9 +409,8 @@ Deno.serve(async (req) => {
       requireTechnician(profile);
       const body = await parseJson(req);
       const notes = typeof body?.notes === "string" ? body.notes : "";
-      const completedAt = typeof body?.completedAt === "string"
-        ? body.completedAt
-        : "";
+      const completedAt =
+        typeof body?.completedAt === "string" ? body.completedAt : "";
       return json({
         data: await pmScheduleService.complete(
           pmCompletionMatch[1],
@@ -443,9 +442,8 @@ Deno.serve(async (req) => {
         throw new HttpError("Reporter access is required.", 403);
       }
       const body = await parseJson(req);
-      const rewardItemId = typeof body?.rewardItemId === "string"
-        ? body.rewardItemId
-        : "";
+      const rewardItemId =
+        typeof body?.rewardItemId === "string" ? body.rewardItemId : "";
       if (!/^[0-9a-f-]{36}$/i.test(rewardItemId)) {
         throw new HttpError("Reward item is invalid.");
       }
@@ -490,9 +488,8 @@ Deno.serve(async (req) => {
       requireAdmin(profile);
       const body = await parseJson(req);
       const status = body?.status;
-      const note = typeof body?.note === "string"
-        ? body.note.trim() || null
-        : null;
+      const note =
+        typeof body?.note === "string" ? body.note.trim() || null : null;
       if (status !== "fulfilled" && status !== "cancelled") {
         throw new HttpError("Redemption status is invalid.");
       }
@@ -564,11 +561,11 @@ Deno.serve(async (req) => {
       const image = body?.image;
       const imageFileId = FileRepository.validateRewardImage(image, profile.id)
         ? (
-          await files.createRewardImageRecord({
-            ...image,
-            userId: profile.id,
-          })
-        ).id
+            await files.createRewardImageRecord({
+              ...image,
+              userId: profile.id,
+            })
+          ).id
         : undefined;
       const reward = await rewards.update(rewardMatch[1], {
         ...rewardInput(body),
@@ -665,9 +662,10 @@ Deno.serve(async (req) => {
 
     if (req.method === "PATCH" && pathname === "/me/onboarding") {
       const body = await parseJson(req);
-      const requestedPosition = typeof body?.requestedPosition === "string"
-        ? body.requestedPosition.trim()
-        : "";
+      const requestedPosition =
+        typeof body?.requestedPosition === "string"
+          ? body.requestedPosition.trim()
+          : "";
       const specialties = Array.isArray(body?.technicianSpecialties)
         ? body.technicianSpecialties
         : [];
@@ -678,7 +676,7 @@ Deno.serve(async (req) => {
       }
       if (
         !specialties.every((value: unknown) =>
-          allowedSpecialties.has(value as Specialty)
+          allowedSpecialties.has(value as Specialty),
         )
       ) {
         throw new HttpError("One or more technician specialties are invalid.");
@@ -799,6 +797,28 @@ Deno.serve(async (req) => {
     const dispatchIncidentDetailMatch = pathname.match(
       /^\/dispatch\/incidents\/([0-9a-f-]{36})$/i,
     );
+    const rejectDispatchIncidentMatch = pathname.match(
+      /^\/dispatch\/incidents\/([0-9a-f-]{36})\/reject$/i,
+    );
+    if (req.method === "POST" && rejectDispatchIncidentMatch) {
+      requireDispatcher(profile);
+      const body = await parseJson(req);
+      const reason = typeof body?.reason === "string" ? body.reason.trim() : "";
+      if (reason.length < 5 || reason.length > 2000) {
+        throw new HttpError(
+          "Rejection reason must contain 5–2,000 characters.",
+        );
+      }
+      const rejected = await incidents.rejectPendingAssignment({
+        id: rejectDispatchIncidentMatch[1],
+        reason,
+        rejectedBy: profile.id,
+      });
+      if (!rejected) {
+        throw new HttpError("Incident is not available for rejection.", 409);
+      }
+      return json({ data: rejected });
+    }
     if (req.method === "GET" && dispatchIncidentDetailMatch) {
       requireDispatcher(profile);
       const detail = await incidents.findForDispatchDetail(
@@ -809,23 +829,27 @@ Deno.serve(async (req) => {
         detail.fileLinks as unknown as Array<{
           files:
             | {
-              bucket: string;
-              object_path: string;
-              file_name: string;
-              mime_type: string;
-              size_bytes: number;
-            }
+                bucket: string;
+                object_path: string;
+                file_name: string;
+                mime_type: string;
+                size_bytes: number;
+              }
             | Array<{
-              bucket: string;
-              object_path: string;
-              file_name: string;
-              mime_type: string;
-              size_bytes: number;
-            }>
+                bucket: string;
+                object_path: string;
+                file_name: string;
+                mime_type: string;
+                size_bytes: number;
+              }>
             | null;
         }>
       ).flatMap((link) =>
-        !link.files ? [] : Array.isArray(link.files) ? link.files : [link.files]
+        !link.files
+          ? []
+          : Array.isArray(link.files)
+            ? link.files
+            : [link.files],
       );
       const attachments = await Promise.all(
         linkedFiles.map(async (file) => ({
@@ -857,22 +881,22 @@ Deno.serve(async (req) => {
     if (req.method === "POST" && pathname === "/dispatch/work-orders") {
       requireDispatcher(profile);
       const body = await parseJson(req);
-      const incidentId = typeof body?.incidentId === "string"
-        ? body.incidentId
-        : "";
-      const primaryTechnicianId = typeof body?.primaryTechnicianId === "string"
-        ? body.primaryTechnicianId
-        : typeof body?.technicianId === "string"
-        ? body.technicianId
-        : "";
+      const incidentId =
+        typeof body?.incidentId === "string" ? body.incidentId : "";
+      const primaryTechnicianId =
+        typeof body?.primaryTechnicianId === "string"
+          ? body.primaryTechnicianId
+          : typeof body?.technicianId === "string"
+            ? body.technicianId
+            : "";
       const supportTechnicianIds = Array.isArray(body?.supportTechnicianIds)
-        ? body.supportTechnicianIds.filter((id: unknown): id is string =>
-          typeof id === "string" && /^[0-9a-f-]{36}$/i.test(id)
-        )
+        ? body.supportTechnicianIds.filter(
+            (id: unknown): id is string =>
+              typeof id === "string" && /^[0-9a-f-]{36}$/i.test(id),
+          )
         : [];
-      const urgencyVerified = typeof body?.urgencyVerified === "string"
-        ? body.urgencyVerified
-        : "";
+      const urgencyVerified =
+        typeof body?.urgencyVerified === "string" ? body.urgencyVerified : "";
       if (!["critical", "urgent", "normal"].includes(urgencyVerified)) {
         throw new HttpError("Verified urgency is required.");
       }
@@ -922,15 +946,19 @@ Deno.serve(async (req) => {
         },
       );
       if (assignmentError) {
-        const message = assignmentError.message || "Unable to assign work order.";
+        const message =
+          assignmentError.message || "Unable to assign work order.";
         if (
           message === "Incident is not available for assignment." ||
           message === "SLA rule was not configured."
-        ) throw new HttpError(message, 409);
+        )
+          throw new HttpError(message, 409);
         if (
           message === "Technician assignments are invalid." ||
-          message === "Technician specialty does not match the incident category."
-        ) throw new HttpError(message, 422);
+          message ===
+            "Technician specialty does not match the incident category."
+        )
+          throw new HttpError(message, 422);
         throw assignmentError;
       }
       const assigned = Array.isArray(data) ? data[0] : data;
@@ -943,17 +971,23 @@ Deno.serve(async (req) => {
       if (!isApproved(profile) || profile.role !== "technician") {
         throw new HttpError("Technician access is required.", 403);
       }
-      return json({ data: await workOrders.listActiveForTechnician(profile.id) });
+      return json({
+        data: await workOrders.listActiveForTechnician(profile.id),
+      });
     }
     if (req.method === "GET" && pathname === "/work-orders/history") {
       if (!isApproved(profile) || profile.role !== "technician") {
         throw new HttpError("Technician access is required.", 403);
       }
-      return json({ data: await workOrders.listHistoryForTechnician(profile.id) });
+      return json({
+        data: await workOrders.listHistoryForTechnician(profile.id),
+      });
     }
     if (req.method === "GET" && pathname === "/dispatch/work-orders/history") {
       requireDispatcher(profile);
-      return json({ data: await workOrders.listHistoryForDispatcher(profile.id) });
+      return json({
+        data: await workOrders.listHistoryForDispatcher(profile.id),
+      });
     }
     const workOrderDetailMatch = pathname.match(
       /^\/work-orders\/([0-9a-f-]{36})$/i,
@@ -1009,7 +1043,7 @@ Deno.serve(async (req) => {
       if (
         attachments.length > 3 ||
         !attachments.every((file: unknown) =>
-          FileRepository.validateWorkOrderAttachment(file, profile.id)
+          FileRepository.validateWorkOrderAttachment(file, profile.id),
         )
       ) {
         throw new HttpError("Work order attachments are invalid.");
@@ -1072,23 +1106,27 @@ Deno.serve(async (req) => {
         detail.fileLinks as unknown as Array<{
           files:
             | {
-              bucket: string;
-              object_path: string;
-              file_name: string;
-              mime_type: string;
-              size_bytes: number;
-            }
+                bucket: string;
+                object_path: string;
+                file_name: string;
+                mime_type: string;
+                size_bytes: number;
+              }
             | Array<{
-              bucket: string;
-              object_path: string;
-              file_name: string;
-              mime_type: string;
-              size_bytes: number;
-            }>
+                bucket: string;
+                object_path: string;
+                file_name: string;
+                mime_type: string;
+                size_bytes: number;
+              }>
             | null;
         }>
       ).flatMap((link) =>
-        !link.files ? [] : Array.isArray(link.files) ? link.files : [link.files]
+        !link.files
+          ? []
+          : Array.isArray(link.files)
+            ? link.files
+            : [link.files],
       );
       const attachments = await Promise.all(
         linkedFiles.map(async (file) => ({
@@ -1108,28 +1146,28 @@ Deno.serve(async (req) => {
         );
       }
       const body = await parseJson(req);
-      const locationId = typeof body?.locationId === "string"
-        ? body.locationId
-        : "";
-      const categoryInput = typeof body?.category === "string"
-        ? body.category.trim()
-        : "";
-      const category = categoryByCode[categoryInput] ??
+      const locationId =
+        typeof body?.locationId === "string" ? body.locationId : "";
+      const categoryInput =
+        typeof body?.category === "string" ? body.category.trim() : "";
+      const category =
+        categoryByCode[categoryInput] ??
         (allowedCategories.has(categoryInput) ? categoryInput : "");
-      const otherCategory = typeof body?.otherCategory === "string"
-        ? body.otherCategory.trim()
-        : "";
+      const otherCategory =
+        typeof body?.otherCategory === "string"
+          ? body.otherCategory.trim()
+          : "";
       // The reporter does not classify SLA urgency.  It is deliberately
       // assigned only by the dispatcher at work-order assignment time.
       // This compatibility value satisfies the current non-null database
       // column and is never used for deadlines, points, or final priority.
       const urgencyReported = "normal";
-      const description = typeof body?.description === "string"
-        ? body.description.trim()
-        : "";
-      const assetName = typeof body?.assetName === "string"
-        ? body.assetName.trim() || null
-        : null;
+      const description =
+        typeof body?.description === "string" ? body.description.trim() : "";
+      const assetName =
+        typeof body?.assetName === "string"
+          ? body.assetName.trim() || null
+          : null;
       const attachments: unknown[] = Array.isArray(body?.attachments)
         ? body.attachments
         : [];
@@ -1138,7 +1176,10 @@ Deno.serve(async (req) => {
         invalidFields.push("ตำแหน่งจาก QR Code");
       }
       if (!allowedCategories.has(category)) invalidFields.push("ประเภทปัญหา");
-      if (category === "อื่น ๆ" && (otherCategory.length < 2 || otherCategory.length > 120)) {
+      if (
+        category === "อื่น ๆ" &&
+        (otherCategory.length < 2 || otherCategory.length > 120)
+      ) {
         invalidFields.push("ประเภทปัญหาอื่น ๆ");
       }
       if (description.length < 5 || description.length > 4000) {
@@ -1158,7 +1199,7 @@ Deno.serve(async (req) => {
       if (
         attachments.length > 3 ||
         !attachments.every((file: unknown) =>
-          FileRepository.validateIncidentAttachment(file, profile.id)
+          FileRepository.validateIncidentAttachment(file, profile.id),
         )
       ) {
         throw new HttpError("Incident attachments are invalid.");
@@ -1177,8 +1218,7 @@ Deno.serve(async (req) => {
             try {
               return await incidents.create({
                 locationId,
-                locationLabel:
-                  `${location.building} · ${location.floor} · ${location.zone}`,
+                locationLabel: `${location.building} · ${location.floor} · ${location.zone}`,
                 assetName,
                 category,
                 otherCategory: category === "อื่น ๆ" ? otherCategory : null,
@@ -1206,8 +1246,8 @@ Deno.serve(async (req) => {
       requireAdmin(profile);
       const requestedStatus = url.searchParams.get("approvalStatus");
       const approvalStatus = ["pending", "approved", "rejected"].includes(
-          requestedStatus ?? "",
-        )
+        requestedStatus ?? "",
+      )
         ? (requestedStatus as ApprovalStatus)
         : null;
       return json({ data: await profiles.list(approvalStatus) });
@@ -1249,9 +1289,8 @@ Deno.serve(async (req) => {
       const specialties = Array.isArray(body?.technicianSpecialties)
         ? body.technicianSpecialties
         : [];
-      const note = typeof body?.note === "string"
-        ? body.note.trim() || null
-        : null;
+      const note =
+        typeof body?.note === "string" ? body.note.trim() || null : null;
       if (
         !(["pending", "approved", "rejected"] as string[]).includes(
           approvalStatus,
@@ -1267,14 +1306,13 @@ Deno.serve(async (req) => {
       }
       if (
         !specialties.every((value: unknown) =>
-          allowedSpecialties.has(value as Specialty)
+          allowedSpecialties.has(value as Specialty),
         )
       ) {
         throw new HttpError("One or more technician specialties are invalid.");
       }
-      const actualRole = approvalStatus === "approved"
-        ? (role as AppRole)
-        : null;
+      const actualRole =
+        approvalStatus === "approved" ? (role as AppRole) : null;
       return json({
         data: await profiles.setApproval({
           id: approvalMatch[1],

@@ -8,7 +8,7 @@ export class IncidentRepository {
     const { data, error } = await this.db
       .from("incidents")
       .select(
-        "id, ticket_number, location_id, location_label, asset_name, category, other_category, urgency_reported, description, status, created_at, updated_at",
+        "id, ticket_number, location_id, location_label, asset_name, category, other_category, urgency_reported, description, status, rejection_reason, rejected_at, created_at, updated_at",
       )
       .eq("reporter_id", reporterId)
       .order("created_at", { ascending: false });
@@ -73,7 +73,7 @@ export class IncidentRepository {
     const { data: incident, error: incidentError } = await this.db
       .from("incidents")
       .select(
-        "id, ticket_number, location_id, location_label, asset_name, category, other_category, urgency_reported, description, status, created_at, updated_at",
+        "id, ticket_number, location_id, location_label, asset_name, category, other_category, urgency_reported, description, status, rejection_reason, rejected_at, created_at, updated_at",
       )
       .eq("id", id)
       .eq("reporter_id", reporterId)
@@ -142,6 +142,7 @@ export class IncidentRepository {
       .select("id")
       .eq("location_id", locationId)
       .in("status", [
+        "submitted",
         "pending_assignment",
         "assigned",
         "in_progress",
@@ -185,5 +186,26 @@ export class IncidentRepository {
       .update({ status })
       .eq("id", id);
     if (error) throw error;
+  }
+
+  async rejectPendingAssignment(input: {
+    id: string;
+    reason: string;
+    rejectedBy: string;
+  }) {
+    const { data, error } = await this.db
+      .from("incidents")
+      .update({
+        status: "rejected",
+        rejection_reason: input.reason,
+        rejected_by: input.rejectedBy,
+        rejected_at: new Date().toISOString(),
+      })
+      .eq("id", input.id)
+      .eq("status", "pending_assignment")
+      .select("id, ticket_number, status, rejection_reason, rejected_at")
+      .maybeSingle();
+    if (error) throw error;
+    return data;
   }
 }

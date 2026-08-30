@@ -372,7 +372,8 @@ export class DashboardRepository {
         openCount: 0,
       };
       current.count += 1;
-      if (incident.status !== "done") current.openCount += 1;
+      if (!["done", "rejected"].includes(incident.status))
+        current.openCount += 1;
       hotspotMap.set(key, current);
     }
 
