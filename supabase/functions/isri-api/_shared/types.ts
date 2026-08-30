@@ -41,6 +41,7 @@ export const allowedCategories = new Set([
   "เครื่องปรับอากาศ",
   "ลิฟต์",
   "โครงสร้าง/พื้นผิวอาคาร (ผนัง พื้น เพดาน ประตู)",
+  "อื่น ๆ",
 ]);
 
 export const isApproved = (profile: Profile) =>

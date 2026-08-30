@@ -12,7 +12,8 @@ export class PmScheduleRepository {
     const { data, error } = await this.db
       .from("pm_schedules")
       .select(scheduleColumns)
-      .order("next_due_at");
+      // PM is an operational queue, so preserve first-created-first-served.
+      .order("created_at", { ascending: true });
     if (error) throw error;
     return data ?? [];
   }

@@ -24,7 +24,7 @@ export class CampaignRepository {
     const { data, error } = await this.db
       .from("reward_campaigns")
       .select(campaignColumns)
-      .order("start_date", { ascending: false });
+      .order("created_at", { ascending: false });
     if (error) throw error;
     return data ?? [];
   }

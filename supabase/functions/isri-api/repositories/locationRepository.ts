@@ -10,9 +10,9 @@ export class LocationRepository {
     const { data, error } = await this.db
       .from("managed_locations")
       .select(columns)
-      .order("building")
-      .order("floor")
-      .order("zone");
+      // The QR management screen is an administrative catalogue: the newest
+      // location must be immediately visible after it is created.
+      .order("created_at", { ascending: false });
     if (error) throw error;
     return data;
   }

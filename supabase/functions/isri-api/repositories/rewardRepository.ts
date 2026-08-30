@@ -10,7 +10,7 @@ export class RewardRepository {
     let query = this.db
       .from("reward_items")
       .select(rewardColumns)
-      .order("created_at");
+      .order("created_at", { ascending: false });
     if (!includeInactive) query = query.eq("is_active", true);
     const { data, error } = await query;
     if (error) throw error;

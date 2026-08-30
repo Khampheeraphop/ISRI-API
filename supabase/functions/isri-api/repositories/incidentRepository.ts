@@ -8,7 +8,7 @@ export class IncidentRepository {
     const { data, error } = await this.db
       .from("incidents")
       .select(
-        "id, ticket_number, location_id, location_label, asset_name, category, urgency_reported, description, status, created_at, updated_at",
+        "id, ticket_number, location_id, location_label, asset_name, category, other_category, urgency_reported, description, status, created_at, updated_at",
       )
       .eq("reporter_id", reporterId)
       .order("created_at", { ascending: false });
@@ -21,6 +21,7 @@ export class IncidentRepository {
     locationLabel: string;
     assetName: string | null;
     category: string;
+    otherCategory: string | null;
     urgencyReported: string;
     description: string;
     reporterId: string;
@@ -33,6 +34,7 @@ export class IncidentRepository {
         location_label: input.locationLabel,
         asset_name: input.assetName,
         category: input.category,
+        other_category: input.otherCategory,
         urgency_reported: input.urgencyReported,
         description: input.description,
         reporter_id: input.reporterId,
@@ -71,7 +73,7 @@ export class IncidentRepository {
     const { data: incident, error: incidentError } = await this.db
       .from("incidents")
       .select(
-        "id, ticket_number, location_id, location_label, asset_name, category, urgency_reported, description, status, created_at, updated_at",
+        "id, ticket_number, location_id, location_label, asset_name, category, other_category, urgency_reported, description, status, created_at, updated_at",
       )
       .eq("id", id)
       .eq("reporter_id", reporterId)
@@ -92,7 +94,7 @@ export class IncidentRepository {
     const { data, error } = await this.db
       .from("incidents")
       .select(
-        "id, ticket_number, urgency_reported, urgency_verified, created_at",
+        "id, ticket_number, category, other_category, urgency_reported, urgency_verified, created_at",
       )
       .eq("id", id)
       .eq("status", "pending_assignment")
@@ -105,7 +107,7 @@ export class IncidentRepository {
     const { data: incident, error: incidentError } = await this.db
       .from("incidents")
       .select(
-        "id, ticket_number, location_id, location_label, asset_name, category, urgency_reported, urgency_verified, description, status, created_at, updated_at",
+        "id, ticket_number, location_id, location_label, asset_name, category, other_category, urgency_reported, urgency_verified, description, status, created_at, updated_at",
       )
       .eq("id", id)
       .eq("status", "pending_assignment")
@@ -126,7 +128,7 @@ export class IncidentRepository {
     const { data, error } = await this.db
       .from("incidents")
       .select(
-        "id, ticket_number, location_label, asset_name, category, urgency_reported, urgency_verified, description, created_at",
+        "id, ticket_number, location_label, asset_name, category, other_category, urgency_reported, urgency_verified, description, created_at",
       )
       .eq("status", "pending_assignment")
       .order("created_at", { ascending: true });

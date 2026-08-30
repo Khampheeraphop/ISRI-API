@@ -217,6 +217,15 @@ const categoryByCode: Record<string, string> = {
   air_conditioning: "เครื่องปรับอากาศ",
   elevator: "ลิฟต์",
   building: "โครงสร้าง/พื้นผิวอาคาร (ผนัง พื้น เพดาน ประตู)",
+  other: "อื่น ๆ",
+};
+
+const specialtyForCategory: Record<string, Specialty | undefined> = {
+  "ไฟฟ้า": "electrical",
+  "ประปา": "plumbing",
+  "เครื่องปรับอากาศ": "air_conditioning",
+  "ลิฟต์": "elevator",
+  "โครงสร้าง/พื้นผิวอาคาร (ผนัง พื้น เพดาน ประตู)": "building",
 };
 
 Deno.serve(async (req) => {
@@ -254,9 +263,8 @@ Deno.serve(async (req) => {
       const actorIds = history.events.flatMap((event) =>
         event.changed_by ? [event.changed_by] : []
       );
-      if (history.workOrder?.technician_id) {
-        actorIds.push(history.workOrder.technician_id);
-      }
+      const assignees = history.workOrder?.assignees ?? [];
+      actorIds.push(...assignees.map((assignee) => assignee.technician_id));
       const names = await profiles.namesByIds(actorIds);
       const eventIds = history.events.map((event) => event.id);
       const { data: linkedFiles, error: linkedFilesError } = eventIds.length
@@ -283,6 +291,11 @@ Deno.serve(async (req) => {
             technician_name: history.workOrder.technician_id
               ? (names.get(history.workOrder.technician_id) ?? "ไม่ระบุ")
               : null,
+            support_technician_names: assignees
+              .filter((assignee) => assignee.assignment_role === "support")
+              .map((assignee) =>
+                names.get(assignee.technician_id) ?? "ไม่ระบุ"
+              ),
           }
           : null,
         events: await Promise.all(
@@ -847,9 +860,16 @@ Deno.serve(async (req) => {
       const incidentId = typeof body?.incidentId === "string"
         ? body.incidentId
         : "";
-      const technicianId = typeof body?.technicianId === "string"
+      const primaryTechnicianId = typeof body?.primaryTechnicianId === "string"
+        ? body.primaryTechnicianId
+        : typeof body?.technicianId === "string"
         ? body.technicianId
         : "";
+      const supportTechnicianIds = Array.isArray(body?.supportTechnicianIds)
+        ? body.supportTechnicianIds.filter((id: unknown): id is string =>
+          typeof id === "string" && /^[0-9a-f-]{36}$/i.test(id)
+        )
+        : [];
       const urgencyVerified = typeof body?.urgencyVerified === "string"
         ? body.urgencyVerified
         : "";
@@ -860,13 +880,34 @@ Deno.serve(async (req) => {
       if (!incident) {
         throw new HttpError("Incident is not available for assignment.", 404);
       }
-      const technician = await profiles.findById(technicianId);
+      const assigneeIds = [primaryTechnicianId, ...supportTechnicianIds];
       if (
-        !technician ||
-        !isApproved(technician) ||
-        technician.role !== "technician"
+        !/^[0-9a-f-]{36}$/i.test(primaryTechnicianId) ||
+        supportTechnicianIds.length > 10 ||
+        new Set(assigneeIds).size !== assigneeIds.length
       ) {
-        throw new HttpError("Technician was not found.", 404);
+        throw new HttpError("Technician assignments are invalid.");
+      }
+      const requiredSpecialty = specialtyForCategory[incident.category];
+      const assignees = await Promise.all(
+        assigneeIds.map((technicianId) => profiles.findById(technicianId)),
+      );
+      if (
+        assignees.some(
+          (technician) =>
+            !technician ||
+            !isApproved(technician) ||
+            technician.role !== "technician" ||
+            (requiredSpecialty !== undefined &&
+              !technician.technician_specialties.includes(requiredSpecialty)),
+        )
+      ) {
+        throw new HttpError(
+          requiredSpecialty
+            ? "Technician specialty does not match the incident category."
+            : "Technician was not found.",
+          422,
+        );
       }
       const sla = await workOrders.getSlaRule(urgencyVerified);
       if (!sla) throw new HttpError("SLA rule was not configured.", 409);
@@ -874,12 +915,24 @@ Deno.serve(async (req) => {
         "assign_incident_to_technician",
         {
           p_incident_id: incidentId,
-          p_technician_id: technicianId,
+          p_primary_technician_id: primaryTechnicianId,
+          p_support_technician_ids: supportTechnicianIds,
           p_dispatcher_id: profile.id,
           p_urgency_verified: urgencyVerified,
         },
       );
-      if (assignmentError) throw assignmentError;
+      if (assignmentError) {
+        const message = assignmentError.message || "Unable to assign work order.";
+        if (
+          message === "Incident is not available for assignment." ||
+          message === "SLA rule was not configured."
+        ) throw new HttpError(message, 409);
+        if (
+          message === "Technician assignments are invalid." ||
+          message === "Technician specialty does not match the incident category."
+        ) throw new HttpError(message, 422);
+        throw assignmentError;
+      }
       const assigned = Array.isArray(data) ? data[0] : data;
       if (!assigned) {
         throw new HttpError("Incident is not available for assignment.", 409);
@@ -890,7 +943,17 @@ Deno.serve(async (req) => {
       if (!isApproved(profile) || profile.role !== "technician") {
         throw new HttpError("Technician access is required.", 403);
       }
-      return json({ data: await workOrders.listForTechnician(profile.id) });
+      return json({ data: await workOrders.listActiveForTechnician(profile.id) });
+    }
+    if (req.method === "GET" && pathname === "/work-orders/history") {
+      if (!isApproved(profile) || profile.role !== "technician") {
+        throw new HttpError("Technician access is required.", 403);
+      }
+      return json({ data: await workOrders.listHistoryForTechnician(profile.id) });
+    }
+    if (req.method === "GET" && pathname === "/dispatch/work-orders/history") {
+      requireDispatcher(profile);
+      return json({ data: await workOrders.listHistoryForDispatcher(profile.id) });
     }
     const workOrderDetailMatch = pathname.match(
       /^\/work-orders\/([0-9a-f-]{36})$/i,
@@ -1053,6 +1116,9 @@ Deno.serve(async (req) => {
         : "";
       const category = categoryByCode[categoryInput] ??
         (allowedCategories.has(categoryInput) ? categoryInput : "");
+      const otherCategory = typeof body?.otherCategory === "string"
+        ? body.otherCategory.trim()
+        : "";
       // The reporter does not classify SLA urgency.  It is deliberately
       // assigned only by the dispatcher at work-order assignment time.
       // This compatibility value satisfies the current non-null database
@@ -1072,6 +1138,9 @@ Deno.serve(async (req) => {
         invalidFields.push("ตำแหน่งจาก QR Code");
       }
       if (!allowedCategories.has(category)) invalidFields.push("ประเภทปัญหา");
+      if (category === "อื่น ๆ" && (otherCategory.length < 2 || otherCategory.length > 120)) {
+        invalidFields.push("ประเภทปัญหาอื่น ๆ");
+      }
       if (description.length < 5 || description.length > 4000) {
         invalidFields.push("รายละเอียดปัญหา");
       }
@@ -1112,6 +1181,7 @@ Deno.serve(async (req) => {
                   `${location.building} · ${location.floor} · ${location.zone}`,
                 assetName,
                 category,
+                otherCategory: category === "อื่น ๆ" ? otherCategory : null,
                 urgencyReported,
                 description,
                 reporterId: profile.id,
