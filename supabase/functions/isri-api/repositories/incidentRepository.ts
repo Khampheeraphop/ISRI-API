@@ -90,6 +90,44 @@ export class IncidentRepository {
     return { incident, fileLinks: fileLinks ?? [] };
   }
 
+  async lifecycleEvents(incidentId: string) {
+    const { data, error } = await this.db
+      .from("incidents")
+      .select(
+        "id, reporter_id, created_at, status, rejection_reason, rejected_by, rejected_at",
+      )
+      .eq("id", incidentId)
+      .maybeSingle();
+    if (error) throw error;
+    if (!data) return [];
+    const events = [
+      {
+        id: `incident-created-${data.id}`,
+        status: "pending_assignment",
+        changed_by: data.reporter_id,
+        changed_at: data.created_at,
+        note: "สร้างรายการแจ้งซ่อม",
+        event_type: "incident_created",
+      },
+    ];
+    if (
+      data.status === "rejected" &&
+      data.rejection_reason &&
+      data.rejected_by &&
+      data.rejected_at
+    ) {
+      events.push({
+        id: `incident-rejected-${data.id}`,
+        status: "rejected",
+        changed_by: data.rejected_by,
+        changed_at: data.rejected_at,
+        note: data.rejection_reason,
+        event_type: "incident_rejected",
+      });
+    }
+    return events;
+  }
+
   async findForDispatch(id: string) {
     const { data, error } = await this.db
       .from("incidents")

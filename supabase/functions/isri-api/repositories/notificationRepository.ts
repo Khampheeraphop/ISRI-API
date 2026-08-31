@@ -10,6 +10,7 @@ export class NotificationRepository {
         | "new_assignment_pending"
         | "job_assigned"
         | "job_done"
+        | "incident_rejected"
         | "reward_status";
       message: string;
       incidentId: string;
@@ -35,7 +36,27 @@ export class NotificationRepository {
       .order("created_at", { ascending: false })
       .limit(30);
     if (error) throw error;
-    return data;
+    const incidentIds = (data ?? [])
+      .map((notification) => notification.related_incident_id)
+      .filter((id): id is string => Boolean(id));
+    if (!incidentIds.length) return data ?? [];
+    const { data: workOrders, error: workOrdersError } = await this.db
+      .from("work_orders")
+      .select("id, incident_id")
+      .in("incident_id", incidentIds);
+    if (workOrdersError) throw workOrdersError;
+    const workOrderByIncident = new Map(
+      (workOrders ?? []).map((workOrder) => [
+        workOrder.incident_id,
+        workOrder.id,
+      ]),
+    );
+    return (data ?? []).map((notification) => ({
+      ...notification,
+      work_order_id: notification.related_incident_id
+        ? (workOrderByIncident.get(notification.related_incident_id) ?? null)
+        : null,
+    }));
   }
 
   async markRead(id: string, userId: string) {
@@ -48,5 +69,14 @@ export class NotificationRepository {
       .maybeSingle();
     if (error) throw error;
     return data;
+  }
+
+  async markAllRead(userId: string) {
+    const { error } = await this.db
+      .from("notifications")
+      .update({ is_read: true })
+      .eq("user_id", userId)
+      .eq("is_read", false);
+    if (error) throw error;
   }
 }

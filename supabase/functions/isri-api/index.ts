@@ -260,7 +260,13 @@ Deno.serve(async (req) => {
 
     const historyWithActors = async (incidentId: string) => {
       const history = await workOrders.historyForIncident(incidentId);
-      const actorIds = history.events.flatMap((event) =>
+      const lifecycleEvents = await incidents.lifecycleEvents(incidentId);
+      const timelineEvents = [...lifecycleEvents, ...history.events].sort(
+        (left, right) =>
+          new Date(left.changed_at).getTime() -
+          new Date(right.changed_at).getTime(),
+      );
+      const actorIds = timelineEvents.flatMap((event) =>
         event.changed_by ? [event.changed_by] : [],
       );
       const assignees = history.workOrder?.assignees ?? [];
@@ -299,7 +305,7 @@ Deno.serve(async (req) => {
             }
           : null,
         events: await Promise.all(
-          history.events.map(async (event) => ({
+          timelineEvents.map(async (event) => ({
             ...event,
             changed_by_name: event.changed_by
               ? (names.get(event.changed_by) ?? "ผู้ใช้งานระบบ")
@@ -643,7 +649,31 @@ Deno.serve(async (req) => {
 
     if (req.method === "GET" && pathname === "/notifications") {
       requireApproved(profile);
-      return json({ data: await notifications.listForUser(profile.id) });
+      const notificationItems = await notifications.listForUser(profile.id);
+      return json({
+        data: notificationItems.map((notification) => {
+          const incidentId = notification.related_incident_id;
+          const workOrderId =
+            "work_order_id" in notification ? notification.work_order_id : null;
+          const targetPath = !incidentId
+            ? null
+            : profile.role === "reporter"
+              ? `/incidents/${incidentId}`
+              : profile.role === "technician" && workOrderId
+                ? `/work-orders/${workOrderId}`
+                : profile.role === "dispatcher" && workOrderId
+                  ? `/dispatch/reviews?workOrderId=${workOrderId}`
+                  : profile.role === "dispatcher"
+                    ? `/dispatch/incidents/${incidentId}`
+                    : null;
+          return { ...notification, target_path: targetPath };
+        }),
+      });
+    }
+    if (req.method === "PATCH" && pathname === "/notifications/read-all") {
+      requireApproved(profile);
+      await notifications.markAllRead(profile.id);
+      return json({ data: { success: true } });
     }
     const notificationMatch = pathname.match(
       /^\/notifications\/([0-9a-f-]{36})\/read$/i,
@@ -762,9 +792,12 @@ Deno.serve(async (req) => {
       req.method === "POST" &&
       pathname === "/uploads/work-order-attachments"
     ) {
-      if (!isApproved(profile) || profile.role !== "technician") {
+      if (
+        !isApproved(profile) ||
+        !["technician", "dispatcher"].includes(profile.role ?? "")
+      ) {
         throw new HttpError(
-          "Only approved technicians can upload work order attachments.",
+          "Only approved technicians or dispatchers can upload work order attachments.",
           403,
         );
       }
@@ -1031,6 +1064,15 @@ Deno.serve(async (req) => {
         actorRole,
       );
       if (!workOrder) throw new HttpError("Work order was not found.", 404);
+      if (
+        actorRole === "technician" &&
+        workOrder.assignment_role !== "primary"
+      ) {
+        throw new HttpError(
+          "Only the primary technician can update this work order.",
+          403,
+        );
+      }
       const action = validateWorkOrderAction({
         action: body?.action,
         actorRole: actorRole === "technician" ? "technician" : "dispatcher",
@@ -1050,10 +1092,12 @@ Deno.serve(async (req) => {
       }
       if (
         attachments.length &&
-        !["request_parts", "submit_repair"].includes(action.action)
+        !["request_parts", "submit_repair", "return_for_rework"].includes(
+          action.action,
+        )
       ) {
         throw new HttpError(
-          "Attachments are only accepted with a parts request or repair submission.",
+          "Attachments are only accepted with a parts request, repair submission, or rework request.",
         );
       }
       let result;

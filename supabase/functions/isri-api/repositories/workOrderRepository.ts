@@ -112,15 +112,24 @@ export class WorkOrderRepository {
     return data ?? [];
   }
 
-  private async technicianCanAccess(workOrderId: string, technicianId: string) {
+  private async technicianAssignmentRole(
+    workOrderId: string,
+    technicianId: string,
+  ) {
     const { data, error } = await this.db
       .from("work_order_assignees")
-      .select("work_order_id")
+      .select("assignment_role")
       .eq("work_order_id", workOrderId)
       .eq("technician_id", technicianId)
       .maybeSingle();
     if (error) throw error;
-    return Boolean(data);
+    return data?.assignment_role ?? null;
+  }
+
+  private async technicianCanAccess(workOrderId: string, technicianId: string) {
+    return Boolean(
+      await this.technicianAssignmentRole(workOrderId, technicianId),
+    );
   }
 
   async getForAction(
@@ -128,11 +137,11 @@ export class WorkOrderRepository {
     actorId: string,
     actorRole: "technician" | "dispatcher" | "admin",
   ) {
-    if (
-      actorRole === "technician" &&
-      !(await this.technicianCanAccess(id, actorId))
-    )
-      return null;
+    const assignmentRole =
+      actorRole === "technician"
+        ? await this.technicianAssignmentRole(id, actorId)
+        : null;
+    if (actorRole === "technician" && !assignmentRole) return null;
     let query = this.db
       .from("work_orders")
       .select("id, incident_id, status, technician_id, assigned_by")
@@ -140,7 +149,7 @@ export class WorkOrderRepository {
     if (actorRole === "dispatcher") query = query.eq("assigned_by", actorId);
     const { data, error } = await query.maybeSingle();
     if (error) throw error;
-    return data;
+    return data ? { ...data, assignment_role: assignmentRole } : null;
   }
 
   async applyAction(
