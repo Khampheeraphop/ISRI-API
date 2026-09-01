@@ -27,6 +27,10 @@ import {
   type WorkOrderAttachment,
 } from "./repositories/fileRepository.ts";
 import { NotificationRepository } from "./repositories/notificationRepository.ts";
+import {
+  EmailOutboxRepository,
+  type QueuedWorkflowEmail,
+} from "./repositories/emailOutboxRepository.ts";
 import { WorkOrderRepository } from "./repositories/workOrderRepository.ts";
 import { DashboardRepository } from "./repositories/dashboardRepository.ts";
 import { SlaRepository } from "./repositories/slaRepository.ts";
@@ -42,6 +46,8 @@ import {
   PmScheduleService,
 } from "./services/pmScheduleService.ts";
 import { validateFulfillment } from "./_shared/rewardRules.ts";
+import { WorkflowEmailService } from "./services/workflowEmailService.ts";
+import type { EmailEventKey } from "./services/workflowEmailTemplate.ts";
 
 async function requireSession(req: Request) {
   const supabaseUrl = Deno.env.get("SUPABASE_URL");
@@ -228,6 +234,12 @@ const specialtyForCategory: Record<string, Specialty | undefined> = {
   "โครงสร้าง/พื้นผิวอาคาร (ผนัง พื้น เพดาน ประตู)": "building",
 };
 
+const urgencyLabelByValue: Record<string, string> = {
+  critical: "วิกฤต",
+  urgent: "เร่งด่วน",
+  normal: "ปกติ",
+};
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return optionsResponse();
   try {
@@ -237,6 +249,8 @@ Deno.serve(async (req) => {
     const incidents = new IncidentRepository(db);
     const files = new FileRepository(db);
     const notifications = new NotificationRepository(db);
+    const emailOutbox = new EmailOutboxRepository(db);
+    const workflowEmails = new WorkflowEmailService(emailOutbox);
     const workOrders = new WorkOrderRepository(db);
     const dashboard = new DashboardRepository(db);
     const sla = new SlaRepository(db);
@@ -324,6 +338,107 @@ Deno.serve(async (req) => {
           })),
         ),
       };
+    };
+
+    type IncidentEmailContext = {
+      id: string;
+      ticketNumber: string;
+      locationLabel: string;
+      assetName: string | null;
+      category: string;
+      urgencyLabel: string;
+      reporter: Profile | null;
+    };
+
+    const getIncidentEmailContext = async (
+      incidentId: string,
+    ): Promise<IncidentEmailContext | null> => {
+      const { data, error: contextError } = await db
+        .from("incidents")
+        .select(
+          "id, ticket_number, location_label, asset_name, category, other_category, urgency_reported, urgency_verified, reporter_id",
+        )
+        .eq("id", incidentId)
+        .maybeSingle();
+      if (contextError) throw contextError;
+      if (!data) return null;
+      const incident = data as {
+        id: string;
+        ticket_number: string;
+        location_label: string;
+        asset_name: string | null;
+        category: string;
+        other_category: string | null;
+        urgency_reported: string | null;
+        urgency_verified: string | null;
+        reporter_id: string;
+      };
+      const verifiedUrgency =
+        incident.urgency_verified ?? incident.urgency_reported;
+      return {
+        id: incident.id,
+        ticketNumber: incident.ticket_number,
+        locationLabel: incident.location_label,
+        assetName: incident.asset_name,
+        category:
+          incident.category === "อื่น ๆ" && incident.other_category
+            ? `อื่น ๆ: ${incident.other_category}`
+            : incident.category,
+        urgencyLabel: incident.urgency_verified
+          ? (urgencyLabelByValue[verifiedUrgency ?? ""] ?? verifiedUrgency)
+          : "รอผู้จัดสรรงานกำหนด",
+        reporter: await profiles.findById(incident.reporter_id),
+      };
+    };
+
+    const appUrl = Deno.env.get("APP_URL")?.trim().replace(/\/$/, "") ?? "";
+    const appLink = (path: string) => (appUrl ? `${appUrl}${path}` : "");
+    const queuedEmail = (input: {
+      eventKey: EmailEventKey;
+      recipient: Profile | null;
+      context: IncidentEmailContext;
+      workOrderId?: string | null;
+      path: string;
+      actionByName?: string | null;
+      note?: string | null;
+    }): QueuedWorkflowEmail | null => {
+      if (!input.recipient?.email) return null;
+      return {
+        recipientUserId: input.recipient.id,
+        recipientEmail: input.recipient.email,
+        eventKey: input.eventKey,
+        relatedIncidentId: input.context.id,
+        relatedWorkOrderId: input.workOrderId ?? null,
+        payload: {
+          recipientName: input.recipient.full_name || "ผู้ใช้งานระบบ",
+          ticketNumber: input.context.ticketNumber,
+          reporterName: input.context.reporter?.full_name ?? null,
+          locationLabel: input.context.locationLabel,
+          assetName: input.context.assetName,
+          category: input.context.category,
+          urgencyLabel: input.context.urgencyLabel,
+          actionByName: input.actionByName ?? null,
+          note: input.note ?? null,
+          actionUrl: appLink(input.path),
+        },
+      };
+    };
+
+    const queueWorkflowEmails = async (
+      candidates: Array<QueuedWorkflowEmail | null>,
+    ) => {
+      const items = candidates.filter(
+        (candidate): candidate is QueuedWorkflowEmail => candidate !== null,
+      );
+      if (!items.length) return;
+      try {
+        await workflowEmails.enqueueMany(items);
+        await workflowEmails.deliverPending();
+      } catch (cause) {
+        // Email is an asynchronous notification channel. A provider or queue
+        // error must never undo an already-committed workflow state change.
+        console.error("Unable to queue workflow email", cause);
+      }
     };
 
     if (req.method === "GET" && pathname === "/me") {
@@ -850,6 +965,19 @@ Deno.serve(async (req) => {
       if (!rejected) {
         throw new HttpError("Incident is not available for rejection.", 409);
       }
+      const context = await getIncidentEmailContext(rejected.id);
+      if (context) {
+        await queueWorkflowEmails([
+          queuedEmail({
+            eventKey: "incident_rejected",
+            recipient: context.reporter,
+            context,
+            path: `/incidents/${context.id}`,
+            actionByName: profile.full_name,
+            note: reason,
+          }),
+        ]);
+      }
       return json({ data: rejected });
     }
     if (req.method === "GET" && dispatchIncidentDetailMatch) {
@@ -998,6 +1126,35 @@ Deno.serve(async (req) => {
       if (!assigned) {
         throw new HttpError("Incident is not available for assignment.", 409);
       }
+      const context = await getIncidentEmailContext(incidentId);
+      if (context) {
+        const technicianProfiles = assignees.filter(
+          (candidate): candidate is Profile => candidate !== null,
+        );
+        await queueWorkflowEmails([
+          queuedEmail({
+            eventKey: "assignment_reporter",
+            recipient: context.reporter,
+            context,
+            workOrderId: assigned.id,
+            path: `/incidents/${context.id}`,
+            actionByName: profile.full_name,
+          }),
+          ...technicianProfiles.map((technician) =>
+            queuedEmail({
+              eventKey:
+                technician.id === primaryTechnicianId
+                  ? "assignment_technician_primary"
+                  : "assignment_technician_support",
+              recipient: technician,
+              context,
+              workOrderId: assigned.id,
+              path: `/work-orders/${assigned.id}`,
+              actionByName: profile.full_name,
+            }),
+          ),
+        ]);
+      }
       return json({ data: assigned }, 201);
     }
     if (req.method === "GET" && pathname === "/work-orders/mine") {
@@ -1119,6 +1276,108 @@ Deno.serve(async (req) => {
           );
         }
         throw cause;
+      }
+      const context = await getIncidentEmailContext(workOrder.incident_id);
+      if (context) {
+        const dispatcher = await profiles.findById(workOrder.assigned_by);
+        const primaryTechnician = await profiles.findById(
+          workOrder.technician_id,
+        );
+        const workOrderPath = `/work-orders/${workOrder.id}`;
+        const dispatcherReviewPath = `/dispatch/reviews?workOrderId=${workOrder.id}`;
+        const actionByName = profile.full_name;
+        const candidates: Array<QueuedWorkflowEmail | null> = [];
+        if (action.action === "accept_work") {
+          candidates.push(
+            queuedEmail({
+              eventKey: "work_accepted",
+              recipient: context.reporter,
+              context,
+              workOrderId: workOrder.id,
+              path: `/incidents/${context.id}`,
+              actionByName,
+            }),
+            queuedEmail({
+              eventKey: "work_accepted",
+              recipient: dispatcher,
+              context,
+              workOrderId: workOrder.id,
+              path: `/dispatch/incidents/${context.id}`,
+              actionByName,
+            }),
+          );
+        }
+        if (action.action === "request_parts") {
+          candidates.push(
+            queuedEmail({
+              eventKey: "parts_requested",
+              recipient: dispatcher,
+              context,
+              workOrderId: workOrder.id,
+              path: dispatcherReviewPath,
+              actionByName,
+              note: action.note,
+            }),
+          );
+        }
+        if (
+          action.action === "approve_parts" ||
+          action.action === "reject_parts"
+        ) {
+          candidates.push(
+            queuedEmail({
+              eventKey:
+                action.action === "approve_parts"
+                  ? "parts_approved"
+                  : "parts_rejected",
+              recipient: primaryTechnician,
+              context,
+              workOrderId: workOrder.id,
+              path: workOrderPath,
+              actionByName,
+              note: action.note,
+            }),
+          );
+        }
+        if (action.action === "submit_repair") {
+          candidates.push(
+            queuedEmail({
+              eventKey: "repair_submitted",
+              recipient: dispatcher,
+              context,
+              workOrderId: workOrder.id,
+              path: dispatcherReviewPath,
+              actionByName,
+              note: action.note,
+            }),
+          );
+        }
+        if (action.action === "return_for_rework") {
+          candidates.push(
+            queuedEmail({
+              eventKey: "rework_requested",
+              recipient: primaryTechnician,
+              context,
+              workOrderId: workOrder.id,
+              path: workOrderPath,
+              actionByName,
+              note: action.note,
+            }),
+          );
+        }
+        if (action.action === "approve_repair") {
+          candidates.push(
+            queuedEmail({
+              eventKey: "repair_completed",
+              recipient: context.reporter,
+              context,
+              workOrderId: workOrder.id,
+              path: `/incidents/${context.id}`,
+              actionByName,
+            }),
+          );
+        }
+        await queueWorkflowEmails(candidates);
       }
       return json({ data: result });
     }
@@ -1256,34 +1515,54 @@ Deno.serve(async (req) => {
           409,
         );
       }
-      return json(
-        {
-          data: await (async () => {
-            try {
-              return await incidents.create({
-                locationId,
-                locationLabel: `${location.building} · ${location.floor} · ${location.zone}`,
-                assetName,
-                category,
-                otherCategory: category === "อื่น ๆ" ? otherCategory : null,
-                urgencyReported,
-                description,
-                reporterId: profile.id,
-                attachments: attachments as IncidentAttachment[],
-              });
-            } catch (cause) {
-              if (hasDatabaseCode(cause, "23505")) {
-                throw new HttpError(
-                  "This QR location already has an incident in progress.",
-                  409,
-                );
-              }
-              throw cause;
-            }
-          })(),
-        },
-        201,
-      );
+      let created;
+      try {
+        created = await incidents.create({
+          locationId,
+          locationLabel: `${location.building} · ${location.floor} · ${location.zone}`,
+          assetName,
+          category,
+          otherCategory: category === "อื่น ๆ" ? otherCategory : null,
+          urgencyReported,
+          description,
+          reporterId: profile.id,
+          attachments: attachments as IncidentAttachment[],
+        });
+      } catch (cause) {
+        if (hasDatabaseCode(cause, "23505")) {
+          throw new HttpError(
+            "This QR location already has an incident in progress.",
+            409,
+          );
+        }
+        throw cause;
+      }
+      const context = await getIncidentEmailContext(created.id);
+      if (context) {
+        const dispatchers = await profiles.listApprovedByRole("dispatcher");
+        await queueWorkflowEmails(
+          dispatchers.map((dispatcher) =>
+            queuedEmail({
+              eventKey: "incident_submitted",
+              recipient: dispatcher,
+              context,
+              path: `/dispatch/incidents/${context.id}`,
+              actionByName: profile.full_name,
+            }),
+          ),
+        );
+      }
+      return json({ data: created }, 201);
+    }
+
+    if (req.method === "POST" && pathname === "/admin/email-outbox/process") {
+      requireAdmin(profile);
+      const body = await parseJson(req);
+      const requestedLimit = Number(body?.limit ?? 25);
+      const limit = Number.isInteger(requestedLimit)
+        ? Math.max(1, Math.min(25, requestedLimit))
+        : 25;
+      return json({ data: await workflowEmails.deliverPending(limit) });
     }
 
     if (req.method === "GET" && pathname === "/admin/users") {
