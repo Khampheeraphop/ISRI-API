@@ -1,5 +1,7 @@
 # ISRI API
 
+คู่มือตั้งค่า AI Safety Assistant อยู่ที่ [AI_ASSESSMENT_SETUP.md](./AI_ASSESSMENT_SETUP.md)
+
 Supabase เป็น backend ของระบบ ISRI โดย browser ใช้เฉพาะ publishable key และเรียกข้อมูลผ่าน Edge Function `isri-api` ส่วน `service_role` อยู่ฝั่ง server เท่านั้น
 
 ## ขอบเขตสิทธิ์
