@@ -12,13 +12,13 @@
 
 ## Secrets
 
-ห้ามใส่ OpenAI API key ใน `web` หรือ commit ลง Git
+ห้ามใส่ Gemini API key ใน `web` หรือ commit ลง Git
 
 สำหรับ local development สร้างไฟล์ `supabase/functions/.env` ซึ่งถูก ignore แล้ว:
 
 ```env
-OPENAI_API_KEY=<your-openai-api-key>
-OPENAI_MODEL=gpt-5.6-luna
+GEMINI_API_KEY=<your-gemini-api-key>
+GEMINI_MODEL=gemini-3.7-flash
 ```
 
 เมื่อรัน `supabase start` ไฟล์นี้จะถูกโหลดให้ Edge Functions อัตโนมัติ หรือระบุไฟล์เองเมื่อใช้ `supabase functions serve --env-file <path>`
@@ -26,8 +26,8 @@ OPENAI_MODEL=gpt-5.6-luna
 สำหรับ Supabase Cloud:
 
 ```powershell
-npx supabase secrets set OPENAI_API_KEY=<your-openai-api-key> --project-ref nzwtybjijnreeylbmjlp
-npx supabase secrets set OPENAI_MODEL=gpt-5.6-luna --project-ref nzwtybjijnreeylbmjlp
+npx supabase secrets set GEMINI_API_KEY=<your-gemini-api-key> --project-ref nzwtybjijnreeylbmjlp
+npx supabase secrets set GEMINI_MODEL=gemini-3.7-flash --project-ref nzwtybjijnreeylbmjlp
 ```
 
 จากนั้น deploy migration และ Edge Function โดยคง JWT verification:
@@ -51,8 +51,8 @@ API key อยู่ใน Edge Function เท่านั้น Browser เร
 
 - ไม่ส่งชื่อ อีเมล หรือข้อมูลบัญชีผู้แจ้งไปยังโมเดล
 - รูปและข้อความอาจมีข้อมูลที่ผู้ใช้ถ่ายหรือนำมาใส่เอง จึงควรหลีกเลี่ยงใบหน้า ป้ายผู้ป่วย และข้อมูลสุขภาพ
-- คำขอใช้ `store: false`
+- คำขอใช้ `store: false` แต่การใช้ Gemini free tier อาจถูก Google นำข้อมูลไปปรับปรุงผลิตภัณฑ์ จึงไม่ควรส่งข้อมูลผู้ป่วยหรือข้อมูลลับ
 - ค่า confidence เป็นค่าที่โมเดลประเมินเอง ไม่ใช่ความน่าจะเป็นที่สอบเทียบแล้ว
 - เมื่อข้อมูลไม่ชัด ระบบคืน `suggestedUrgency = null` เพื่อให้คนตรวจ
 
-อ้างอิง: [OpenAI Responses API](https://developers.openai.com/api/reference/cli/resources/responses/methods/create), [Supabase Edge Function secrets](https://supabase.com/docs/guides/functions/secrets)
+อ้างอิง: [Gemini Interactions API](https://ai.google.dev/gemini-api/docs/get-started), [Gemini pricing and data use](https://ai.google.dev/gemini-api/docs/pricing), [Supabase Edge Function secrets](https://supabase.com/docs/guides/functions/secrets)

@@ -1,4 +1,4 @@
-export const aiAssessmentPromptVersion = "isri-hazard-v1";
+export const aiAssessmentPromptVersion = "isri-hazard-v2-gemini";
 
 export const aiHazardCodes = [
   "smoke_or_fire",
@@ -37,7 +37,7 @@ type AiObservation = {
 };
 
 export type AiIncidentAssessmentResult = AiObservation & {
-  provider: "openai";
+  provider: "gemini";
   model: string;
   modelResponseId: string | null;
   promptVersion: string;
@@ -205,18 +205,21 @@ function assertObservation(value: unknown): AiObservation {
   };
 }
 
-function responseOutputText(payload: Record<string, unknown>) {
-  if (typeof payload.output_text === "string") return payload.output_text;
-  if (!Array.isArray(payload.output)) return null;
-  for (const item of payload.output) {
-    if (!item || typeof item !== "object") continue;
+export function geminiOutputText(payload: Record<string, unknown>) {
+  if (!Array.isArray(payload.steps)) return null;
+  for (const item of [...payload.steps].reverse()) {
+    if (
+      !item ||
+      typeof item !== "object" ||
+      (item as { type?: unknown }).type !== "model_output"
+    ) continue;
     const content = (item as { content?: unknown }).content;
     if (!Array.isArray(content)) continue;
     for (const part of content) {
       if (
         part &&
         typeof part === "object" &&
-        (part as { type?: unknown }).type === "output_text" &&
+        (part as { type?: unknown }).type === "text" &&
         typeof (part as { text?: unknown }).text === "string"
       ) {
         return (part as { text: string }).text;
@@ -226,7 +229,47 @@ function responseOutputText(payload: Record<string, unknown>) {
   return null;
 }
 
-export async function analyzeIncidentWithOpenAI(input: {
+function bytesToBase64(bytes: Uint8Array) {
+  let binary = "";
+  const chunkSize = 0x8000;
+  for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(offset, offset + chunkSize));
+  }
+  return btoa(binary);
+}
+
+async function imagePartFromUrl(imageUrl: string) {
+  const response = await fetch(imageUrl);
+  if (!response.ok) {
+    throw new AiAssessmentUnavailableError("ไม่สามารถอ่านภาพประกอบเพื่อวิเคราะห์ได้");
+  }
+  const mimeType = (response.headers.get("content-type") ?? "")
+    .split(";", 1)[0]
+    .trim();
+  if (!mimeType.startsWith("image/")) {
+    throw new AiAssessmentUnavailableError("ไฟล์ประกอบไม่ใช่รูปภาพที่รองรับ");
+  }
+  const bytes = new Uint8Array(await response.arrayBuffer());
+  if (bytes.byteLength > 10 * 1024 * 1024) {
+    throw new AiAssessmentUnavailableError("ภาพประกอบมีขนาดใหญ่เกินไป");
+  }
+  return { type: "image", data: bytesToBase64(bytes), mime_type: mimeType };
+}
+
+function geminiErrorMessage(status: number) {
+  if (status === 401 || status === 403) {
+    return "GEMINI_API_KEY ใช้งานไม่ได้หรือไม่มีสิทธิ์เรียกโมเดล";
+  }
+  if (status === 429) {
+    return "โควตา Gemini ไม่เพียงพอ กรุณาลองใหม่ภายหลัง";
+  }
+  if (status === 400 || status === 404) {
+    return "โมเดล Gemini หรือรูปแบบคำขอไม่พร้อมใช้งาน";
+  }
+  return "บริการ AI ยังไม่พร้อม กรุณาลองใหม่ภายหลัง";
+}
+
+export async function analyzeIncidentWithGemini(input: {
   ticketNumber: string;
   locationLabel: string;
   assetName: string | null;
@@ -234,75 +277,71 @@ export async function analyzeIncidentWithOpenAI(input: {
   description: string;
   imageUrls: string[];
 }): Promise<AiIncidentAssessmentResult> {
-  const apiKey = Deno.env.get("OPENAI_API_KEY")?.trim();
+  const apiKey = Deno.env.get("GEMINI_API_KEY")?.trim();
   if (!apiKey) {
     throw new AiAssessmentUnavailableError(
-      "ยังไม่ได้ตั้งค่า OPENAI_API_KEY สำหรับฟีเจอร์ AI",
+      "ยังไม่ได้ตั้งค่า GEMINI_API_KEY สำหรับฟีเจอร์ AI",
     );
   }
-  const model = Deno.env.get("OPENAI_MODEL")?.trim() || "gpt-5.6-luna";
+  const model = Deno.env.get("GEMINI_MODEL")?.trim() || "gemini-3.7-flash";
   const startedAt = performance.now();
-  const response = await fetch("https://api.openai.com/v1/responses", {
+  const imageParts = await Promise.all(
+    input.imageUrls.slice(0, 3).map(imagePartFromUrl),
+  );
+  const response = await fetch("https://generativelanguage.googleapis.com/v1beta/interactions", {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${apiKey}`,
+      "x-goog-api-key": apiKey,
+      "Api-Revision": "2026-05-20",
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
       model,
       store: false,
-      instructions: [
-        "คุณคือผู้ช่วยคัดกรองเหตุแจ้งซ่อมระบบวิศวกรรมอาคารในสถานพยาบาล",
-        "แยกเฉพาะข้อเท็จจริงที่เห็นจากภาพหรือข้อความ ห้ามแต่งข้อมูลที่ไม่มีหลักฐาน",
-        "ห้ามตัดสิน SLA ขั้นสุดท้ายและห้ามให้คำวินิจฉัยทางการแพทย์",
-        "ถ้าภาพไม่ชัด ข้อมูลขัดแย้ง หรือข้อมูลไม่พอ ให้ใช้ hazard unclear และ needsHumanReview=true",
-        "ไม่ต้องระบุชื่อหรือคุณลักษณะของบุคคลที่อาจปรากฏในภาพ",
-        "ตอบภาษาไทยแบบกระชับตาม JSON schema เท่านั้น",
-      ].join("\n"),
       input: [
         {
-          role: "user",
-          content: [
-            {
-              type: "input_text",
-              text: JSON.stringify({
-                ticketNumber: input.ticketNumber,
-                location: input.locationLabel,
-                assetName: input.assetName,
-                categoryReported: input.categoryReported,
-                description: input.description,
-              }),
-            },
-            ...input.imageUrls.slice(0, 3).map((imageUrl) => ({
-              type: "input_image",
-              image_url: imageUrl,
-              detail: "low",
-            })),
-          ],
+          type: "text",
+          text: [
+            "คุณคือผู้ช่วยคัดกรองเหตุแจ้งซ่อมระบบวิศวกรรมอาคารในสถานพยาบาล",
+            "แยกเฉพาะข้อเท็จจริงที่เห็นจากภาพหรือข้อความ ห้ามแต่งข้อมูลที่ไม่มีหลักฐาน",
+            "ห้ามตัดสิน SLA ขั้นสุดท้ายและห้ามให้คำวินิจฉัยทางการแพทย์",
+            "ถ้าภาพไม่ชัด ข้อมูลขัดแย้ง หรือข้อมูลไม่พอ ให้ใช้ hazard unclear และ needsHumanReview=true",
+            "ไม่ต้องระบุชื่อหรือคุณลักษณะของบุคคลที่อาจปรากฏในภาพ",
+            "ตอบภาษาไทยแบบกระชับตาม JSON schema เท่านั้น",
+            "ข้อมูลเหตุ:",
+            JSON.stringify({
+              ticketNumber: input.ticketNumber,
+              location: input.locationLabel,
+              assetName: input.assetName,
+              categoryReported: input.categoryReported,
+              description: input.description,
+            }),
+          ].join("\n"),
         },
+        ...imageParts,
       ],
-      text: {
-        format: {
-          type: "json_schema",
-          name: "isri_incident_observation",
-          strict: true,
-          schema: responseSchema,
-        },
+      response_format: {
+        type: "text",
+        mime_type: "application/json",
+        schema: responseSchema,
       },
-      max_output_tokens: 1200,
     }),
   });
-  const payload = (await response.json()) as Record<string, unknown>;
+  const rawPayload = await response.text();
+  let payload: Record<string, unknown> = {};
+  try {
+    payload = JSON.parse(rawPayload) as Record<string, unknown>;
+  } catch {
+    // Keep an empty payload so provider HTML/text errors are never returned to clients.
+  }
   if (!response.ok) {
-    console.error("OpenAI assessment request failed", {
+    console.error("Gemini assessment request failed", {
       status: response.status,
       error: payload.error,
     });
-    throw new AiAssessmentUnavailableError(
-      "บริการ AI ยังไม่พร้อม กรุณาลองใหม่ภายหลัง",
-    );
+    throw new AiAssessmentUnavailableError(geminiErrorMessage(response.status));
   }
-  const outputText = responseOutputText(payload);
+  const outputText = geminiOutputText(payload);
   if (!outputText) {
     throw new AiAssessmentUnavailableError("AI ไม่ได้ส่งผลวิเคราะห์กลับมา");
   }
@@ -320,7 +359,7 @@ export async function analyzeIncidentWithOpenAI(input: {
   return {
     ...observation,
     ...decision,
-    provider: "openai",
+    provider: "gemini",
     model,
     modelResponseId: typeof payload.id === "string" ? payload.id : null,
     promptVersion: aiAssessmentPromptVersion,

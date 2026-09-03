@@ -2,7 +2,7 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 import {
   AiAssessmentUnavailableError,
-  analyzeIncidentWithOpenAI,
+  analyzeIncidentWithGemini,
 } from "./service.ts";
 
 const corsHeaders = {
@@ -96,7 +96,7 @@ Deno.serve(async (req) => {
       if (error) throw error;
       return json({
         data,
-        meta: { configured: Boolean(Deno.env.get("OPENAI_API_KEY")) },
+        meta: { configured: Boolean(Deno.env.get("GEMINI_API_KEY")) },
       });
     }
 
@@ -124,7 +124,7 @@ Deno.serve(async (req) => {
         return data.signedUrl;
       }),
     );
-    const result = await analyzeIncidentWithOpenAI({
+    const result = await analyzeIncidentWithGemini({
       ticketNumber: incident.ticket_number,
       locationLabel: incident.location_label,
       assetName: incident.asset_name,
