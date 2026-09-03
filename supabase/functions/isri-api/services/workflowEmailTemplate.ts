@@ -10,11 +10,13 @@ export type EmailEventKey =
   | "parts_rejected"
   | "repair_submitted"
   | "rework_requested"
-  | "repair_completed";
+  | "repair_completed"
+  | "pm_schedule_assigned"
+  | "pm_schedule_updated";
 
 export interface WorkflowEmailPayload {
   recipientName: string;
-  ticketNumber: string;
+  ticketNumber?: string;
   reporterName?: string | null;
   locationLabel: string;
   assetName?: string | null;
@@ -23,6 +25,9 @@ export interface WorkflowEmailPayload {
   actionByName?: string | null;
   note?: string | null;
   actionUrl: string;
+  intervalMonths?: number | null;
+  nextDueAt?: string | null;
+  googleCalendarUrl?: string | null;
 }
 
 export interface RenderedWorkflowEmail {
@@ -129,6 +134,22 @@ const configByEvent: Record<EmailEventKey, TemplateConfig> = {
       "ผู้จัดสรรงานตรวจรับผลการซ่อมเรียบร้อยแล้ว ขอบคุณที่ร่วมแจ้งปัญหาเพื่อความปลอดภัย",
     cta: "ดูรายละเอียดงาน",
   },
+  pm_schedule_assigned: {
+    badge: "แผนงาน PM",
+    badgeColor: "#1e7a5c",
+    title: "คุณได้รับมอบหมายรอบตรวจเช็ค PM ใหม่",
+    intro: (p) =>
+      `มีแผนบำรุงรักษาเชิงป้องกัน (PM) สำหรับ ${p.assetName || "ครุภัณฑ์"} มอบหมายให้คุณดำเนินการทุก ${p.intervalMonths ?? 1} เดือน`,
+    cta: "เปิดดูและบันทึกผล PM",
+  },
+  pm_schedule_updated: {
+    badge: "อัปเดตรอบ PM",
+    badgeColor: "#365f91",
+    title: "มีการแก้ไขรอบตรวจเช็ค PM",
+    intro: (p) =>
+      `แผนบำรุงรักษาเชิงป้องกัน (PM) สำหรับ ${p.assetName || "ครุภัณฑ์"} มีการปรับปรุงข้อมูลรอบตรวจเช็ค`,
+    cta: "เปิดดูและบันทึกผล PM",
+  },
 };
 
 export function renderWorkflowEmail(
@@ -136,17 +157,38 @@ export function renderWorkflowEmail(
   payload: WorkflowEmailPayload,
 ): RenderedWorkflowEmail {
   const config = configByEvent[eventKey];
-  const subject = `[ISRI] ${config.title} · ${payload.ticketNumber}`;
-  const detailRows = [
-    ["เลขที่แจ้ง", payload.ticketNumber],
-    ["ผู้แจ้งเหตุ", payload.reporterName],
-    ["สถานที่", payload.locationLabel],
-    ["อุปกรณ์/จุดแจ้ง", payload.assetName],
-    ["ประเภทปัญหา", payload.category],
-    ["ระดับความเร่งด่วน", payload.urgencyLabel],
-    ["ผู้ดำเนินการ", payload.actionByName],
-    ["รายละเอียดเพิ่มเติม", payload.note],
-  ].filter(([, value]) => Boolean(value && String(value).trim()));
+  const isPm =
+    eventKey === "pm_schedule_assigned" || eventKey === "pm_schedule_updated";
+  const subject = payload.ticketNumber
+    ? `[ISRI] ${config.title} · ${payload.ticketNumber}`
+    : `[ISRI] ${config.title} · ${payload.assetName || "PM"} (${payload.locationLabel})`;
+
+  const detailRows = isPm
+    ? [
+        ["ครุภัณฑ์/อุปกรณ์", payload.assetName],
+        ["สถานที่", payload.locationLabel],
+        [
+          "รอบการตรวจเช็ค",
+          payload.intervalMonths ? `ทุก ${payload.intervalMonths} เดือน` : null,
+        ],
+        [
+          "ครบกำหนดรอบถัดไป",
+          payload.nextDueAt ? payload.nextDueAt.slice(0, 10) : null,
+        ],
+        ["รายละเอียดแผนงาน", payload.note],
+        ["ผู้มอบหมาย", payload.actionByName],
+      ].filter(([, value]) => Boolean(value && String(value).trim()))
+    : [
+        ["เลขที่แจ้ง", payload.ticketNumber],
+        ["ผู้แจ้งเหตุ", payload.reporterName],
+        ["สถานที่", payload.locationLabel],
+        ["อุปกรณ์/จุดแจ้ง", payload.assetName],
+        ["ประเภทปัญหา", payload.category],
+        ["ระดับความเร่งด่วน", payload.urgencyLabel],
+        ["ผู้ดำเนินการ", payload.actionByName],
+        ["รายละเอียดเพิ่มเติม", payload.note],
+      ].filter(([, value]) => Boolean(value && String(value).trim()));
+
   const intro = config.intro(payload);
   const htmlRows = detailRows
     .map(
@@ -163,6 +205,18 @@ export function renderWorkflowEmail(
     .map(([label, value]) => `${label}: ${String(value)}`)
     .join("\n");
   const safeUrl = escapeAttribute(payload.actionUrl);
+  const cardHeaderTitle = payload.ticketNumber
+    ? `รายละเอียดรายการ · ${escapeHtml(payload.ticketNumber)}`
+    : `รายละเอียดรอบตรวจเช็ค PM · ${escapeHtml(payload.assetName || "")}`;
+
+  const gcalHtml = payload.googleCalendarUrl
+    ? `
+            <div style="margin-bottom:12px">
+              <a href="${escapeAttribute(payload.googleCalendarUrl)}" target="_blank" rel="noopener noreferrer" style="display:block;background:#ffffff;border:1.5px solid #1a73e8;border-radius:8px;color:#1a73e8;font-size:14px;font-weight:700;line-height:20px;padding:12px 18px;text-align:center;text-decoration:none">
+                📅 เพิ่มลง Google Calendar
+              </a>
+            </div>`
+    : "";
 
   return {
     subject,
@@ -173,6 +227,9 @@ export function renderWorkflowEmail(
       `สวัสดี ${payload.recipientName}`,
       intro,
       plainDetails,
+      payload.googleCalendarUrl
+        ? `เพิ่มลง Google Calendar: ${payload.googleCalendarUrl}`
+        : null,
       `เปิดรายการ: ${payload.actionUrl}`,
       "อีเมลนี้ส่งจากระบบ ISRI โดยอัตโนมัติ โปรดอย่าตอบกลับอีเมลนี้",
     ]
@@ -198,11 +255,12 @@ export function renderWorkflowEmail(
           </td></tr>
           <tr><td style="padding:18px 30px 12px">
             <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="border:1px solid #e0e5ee;border-radius:9px;overflow:hidden">
-              <tr><td style="padding:13px 16px;background:#f7f8fb;border-bottom:1px solid #e0e5ee;color:#17203d;font-size:12px;font-weight:700;line-height:18px">รายละเอียดรายการ · ${escapeHtml(payload.ticketNumber)}</td></tr>
+              <tr><td style="padding:13px 16px;background:#f7f8fb;border-bottom:1px solid #e0e5ee;color:#17203d;font-size:12px;font-weight:700;line-height:18px">${cardHeaderTitle}</td></tr>
               <tr><td style="padding:0"><table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">${htmlRows}</table></td></tr>
             </table>
           </td></tr>
           <tr><td style="padding:18px 30px 30px">
+            ${gcalHtml}
             <a href="${safeUrl}" style="display:block;background:#5b3ea4;border-radius:8px;color:#ffffff;font-size:14px;font-weight:700;line-height:20px;padding:13px 18px;text-align:center;text-decoration:none">${escapeHtml(config.cta)}</a>
           </td></tr>
           <tr><td style="padding:16px 30px;background:#fafbfc;border-top:1px solid #e8ebf2;color:#7a8494;font-size:11px;line-height:17px;text-align:center">

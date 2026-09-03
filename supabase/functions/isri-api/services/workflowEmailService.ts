@@ -45,6 +45,9 @@ export class WorkflowEmailService {
             subject: message.subject,
             html: message.html,
             text: message.text,
+            ...(item.attachments?.length
+              ? { attachments: item.attachments }
+              : {}),
           }),
         });
         const responseText = await response.text();
@@ -78,11 +81,13 @@ export class WorkflowEmailService {
     return { attempted: candidates.length, sent, failed, skipped: null };
   }
 
-  private readConfiguration() {
+  readConfiguration() {
     const apiKey = Deno.env.get("RESEND_API_KEY")?.trim();
-    const from = Deno.env.get("EMAIL_FROM")?.trim();
-    const appUrl = Deno.env.get("APP_URL")?.trim().replace(/\/$/, "");
-    if (!apiKey || !from || !appUrl) return null;
+    const from = Deno.env.get("EMAIL_FROM")?.trim() || "ISRI <noreply@isri.local>";
+    const appUrl =
+      Deno.env.get("APP_URL")?.trim().replace(/\/$/, "") ||
+      "http://localhost:5173";
+    if (!apiKey) return null;
     return { apiKey, from, appUrl };
   }
 }

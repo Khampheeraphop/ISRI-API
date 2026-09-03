@@ -4,13 +4,21 @@ import type {
   WorkflowEmailPayload,
 } from "../services/workflowEmailTemplate.ts";
 
+export interface EmailAttachment {
+  filename: string;
+  content: string;
+  content_type?: string;
+}
+
 export interface QueuedWorkflowEmail {
   recipientUserId: string;
   recipientEmail: string;
   eventKey: EmailEventKey;
-  relatedIncidentId: string;
-  relatedWorkOrderId: string | null;
+  relatedIncidentId?: string | null;
+  relatedWorkOrderId?: string | null;
+  relatedPmScheduleId?: string | null;
   payload: WorkflowEmailPayload;
+  attachments?: EmailAttachment[] | null;
 }
 
 export interface EmailOutboxItem extends QueuedWorkflowEmail {
@@ -21,7 +29,7 @@ export interface EmailOutboxItem extends QueuedWorkflowEmail {
 }
 
 const outboxColumns =
-  "id, recipient_user_id, recipient_email, event_key, related_incident_id, related_work_order_id, payload, status, attempts, idempotency_key";
+  "id, recipient_user_id, recipient_email, event_key, related_incident_id, related_work_order_id, related_pm_schedule_id, payload, attachments, status, attempts, idempotency_key";
 
 export class EmailOutboxRepository {
   constructor(private readonly db: DatabaseClient) {}
@@ -31,7 +39,7 @@ export class EmailOutboxRepository {
     for (const item of items) {
       if (!item.recipientEmail.trim()) continue;
       uniqueByRecipientAndEvent.set(
-        `${item.eventKey}:${item.recipientUserId}:${item.relatedIncidentId}:${item.relatedWorkOrderId ?? ""}`,
+        `${item.eventKey}:${item.recipientUserId}:${item.relatedIncidentId ?? ""}:${item.relatedWorkOrderId ?? ""}:${item.relatedPmScheduleId ?? ""}`,
         item,
       );
     }
@@ -44,9 +52,11 @@ export class EmailOutboxRepository {
           recipient_user_id: item.recipientUserId,
           recipient_email: item.recipientEmail.trim(),
           event_key: item.eventKey,
-          related_incident_id: item.relatedIncidentId,
-          related_work_order_id: item.relatedWorkOrderId,
+          related_incident_id: item.relatedIncidentId ?? null,
+          related_work_order_id: item.relatedWorkOrderId ?? null,
+          related_pm_schedule_id: item.relatedPmScheduleId ?? null,
           payload: item.payload,
+          attachments: item.attachments ?? null,
         })),
       )
       .select("id");
@@ -119,11 +129,17 @@ function toOutboxItem(row: Record<string, unknown>): EmailOutboxItem {
     recipientUserId: String(row.recipient_user_id),
     recipientEmail: String(row.recipient_email),
     eventKey: row.event_key as EmailEventKey,
-    relatedIncidentId: String(row.related_incident_id),
+    relatedIncidentId: row.related_incident_id
+      ? String(row.related_incident_id)
+      : null,
     relatedWorkOrderId: row.related_work_order_id
       ? String(row.related_work_order_id)
       : null,
+    relatedPmScheduleId: row.related_pm_schedule_id
+      ? String(row.related_pm_schedule_id)
+      : null,
     payload: (row.payload ?? {}) as WorkflowEmailPayload,
+    attachments: (row.attachments ?? null) as EmailAttachment[] | null,
     status: row.status as EmailOutboxItem["status"],
     attempts: Number(row.attempts),
     idempotencyKey: String(row.idempotency_key),

@@ -1,7 +1,7 @@
 import type { DatabaseClient } from "../_shared/types.ts";
 
 const scheduleColumns =
-  "id, location_id, location_label, asset_name, plan_details, interval_months, last_done_at, next_due_at, created_at, updated_at";
+  "id, location_id, location_label, asset_name, plan_details, interval_months, last_done_at, next_due_at, assigned_technician_id, created_at, updated_at, profiles!pm_schedules_assigned_technician_id_fkey(full_name, email)";
 const logColumns =
   "id, schedule_id, completed_at, technician_id, notes, created_at, profiles!pm_logs_technician_id_fkey(full_name)";
 
@@ -52,6 +52,7 @@ export class PmScheduleRepository {
     intervalMonths: number;
     lastDoneAt: string;
     nextDueAt: string;
+    assignedTechnicianId?: string | null;
   }) {
     const { data, error } = await this.db
       .from("pm_schedules")
@@ -63,6 +64,7 @@ export class PmScheduleRepository {
         interval_months: input.intervalMonths,
         last_done_at: input.lastDoneAt,
         next_due_at: input.nextDueAt,
+        assigned_technician_id: input.assignedTechnicianId ?? null,
       })
       .select(scheduleColumns)
       .single();
@@ -80,6 +82,7 @@ export class PmScheduleRepository {
       intervalMonths: number;
       lastDoneAt: string;
       nextDueAt: string;
+      assignedTechnicianId?: string | null;
     },
   ) {
     const { data, error } = await this.db
@@ -92,6 +95,7 @@ export class PmScheduleRepository {
         interval_months: input.intervalMonths,
         last_done_at: input.lastDoneAt,
         next_due_at: input.nextDueAt,
+        assigned_technician_id: input.assignedTechnicianId ?? null,
         updated_at: new Date().toISOString(),
       })
       .eq("id", id)

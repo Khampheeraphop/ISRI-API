@@ -1,13 +1,17 @@
 import { HttpError } from "../_shared/http.ts";
 import { LocationRepository } from "../repositories/locationRepository.ts";
 import { PmScheduleRepository } from "../repositories/pmScheduleRepository.ts";
+import { ProfileRepository } from "../repositories/profileRepository.ts";
+import { WorkflowEmailService } from "./workflowEmailService.ts";
+import { generatePmCalendarInvite } from "./icalendarGenerator.ts";
 
-type PmScheduleInput = {
+export type PmScheduleInput = {
   locationId: string;
   assetName: string;
   planDetails: string;
   intervalMonths: number;
   lastDoneAt: string;
+  assignedTechnicianId?: string | null;
 };
 
 function addMonths(date: Date, months: number) {
@@ -29,6 +33,11 @@ export function parsePmScheduleInput(
   const lastDoneAt =
     typeof body?.lastDoneAt === "string" ? body.lastDoneAt : "";
   const completedDate = new Date(lastDoneAt);
+  const rawTechnicianId = body?.assignedTechnicianId;
+  const assignedTechnicianId =
+    typeof rawTechnicianId === "string" && rawTechnicianId.trim()
+      ? rawTechnicianId.trim()
+      : null;
 
   if (!/^[0-9a-f-]{36}$/i.test(locationId))
     throw new HttpError("PM location is invalid.");
@@ -44,6 +53,8 @@ export function parsePmScheduleInput(
     throw new HttpError("PM interval must be between 1 and 60 months.");
   if (Number.isNaN(completedDate.getTime()) || completedDate > new Date())
     throw new HttpError("PM completion date is invalid.");
+  if (assignedTechnicianId && !/^[0-9a-f-]{36}$/i.test(assignedTechnicianId))
+    throw new HttpError("PM assigned technician is invalid.");
 
   return {
     locationId,
@@ -51,6 +62,7 @@ export function parsePmScheduleInput(
     planDetails,
     intervalMonths,
     lastDoneAt: completedDate.toISOString(),
+    assignedTechnicianId,
   };
 }
 
@@ -58,17 +70,33 @@ export class PmScheduleService {
   constructor(
     private readonly schedules: PmScheduleRepository,
     private readonly locations: LocationRepository,
+    private readonly profiles?: ProfileRepository,
+    private readonly workflowEmails?: WorkflowEmailService,
   ) {}
 
   async create(input: PmScheduleInput) {
     await this.ensureScheduleIsUnique(input);
-    return this.save(input);
+    if (input.assignedTechnicianId) {
+      await this.ensureTechnicianValid(input.assignedTechnicianId);
+    }
+    const created = await this.save(input);
+    if (created && input.assignedTechnicianId) {
+      await this.sendCalendarInvite(created, "pm_schedule_assigned");
+    }
+    return created;
   }
 
   async update(id: string, input: PmScheduleInput) {
     await this.ensureScheduleIsUnique(input, id);
+    if (input.assignedTechnicianId) {
+      await this.ensureTechnicianValid(input.assignedTechnicianId);
+    }
     const values = await this.buildValues(input);
-    return this.schedules.update(id, values);
+    const updated = await this.schedules.update(id, values);
+    if (updated && updated.assigned_technician_id) {
+      await this.sendCalendarInvite(updated, "pm_schedule_updated");
+    }
+    return updated;
   }
 
   async complete(
@@ -116,6 +144,84 @@ export class PmScheduleService {
         "PM plan for this location and asset already exists.",
         409,
       );
+    }
+  }
+
+  private async ensureTechnicianValid(technicianId: string) {
+    if (!this.profiles) return;
+    const technician = await this.profiles.findById(technicianId);
+    if (
+      !technician ||
+      technician.approval_status !== "approved" ||
+      technician.role !== "technician"
+    ) {
+      throw new HttpError(
+        "Assigned PM user must be an approved technician.",
+        400,
+      );
+    }
+  }
+
+  private async sendCalendarInvite(
+    schedule: Record<string, unknown>,
+    eventKey: "pm_schedule_assigned" | "pm_schedule_updated",
+  ) {
+    if (!this.profiles || !this.workflowEmails) return;
+    const technicianId =
+      typeof schedule.assigned_technician_id === "string"
+        ? schedule.assigned_technician_id
+        : null;
+    if (!technicianId) return;
+
+    try {
+      const technician = await this.profiles.findById(technicianId);
+      if (!technician || !technician.email) return;
+
+      const emailConfig = this.workflowEmails.readConfiguration();
+      const appUrl = emailConfig?.appUrl || "http://localhost:5173";
+      const fromEmail = emailConfig?.from || "noreply@isri.local";
+
+      const calendar = generatePmCalendarInvite({
+        scheduleId: String(schedule.id),
+        assetName: String(schedule.asset_name),
+        locationLabel: String(schedule.location_label),
+        planDetails: String(schedule.plan_details),
+        intervalMonths: Number(schedule.interval_months),
+        nextDueAt: String(schedule.next_due_at),
+        appUrl,
+        technicianName: technician.full_name,
+        technicianEmail: technician.email,
+        organizerEmail: fromEmail,
+      });
+
+      await this.workflowEmails.enqueueMany([
+        {
+          recipientUserId: technician.id,
+          recipientEmail: technician.email,
+          eventKey,
+          relatedPmScheduleId: String(schedule.id),
+          payload: {
+            recipientName: technician.full_name,
+            assetName: String(schedule.asset_name),
+            locationLabel: String(schedule.location_label),
+            intervalMonths: Number(schedule.interval_months),
+            nextDueAt: String(schedule.next_due_at),
+            note: String(schedule.plan_details),
+            actionUrl: `${appUrl}/pm/${schedule.id}/complete`,
+            googleCalendarUrl: calendar.googleCalendarUrl,
+          },
+          attachments: [
+            {
+              filename: "pm-schedule.ics",
+              content: calendar.base64Ics,
+              content_type: "text/calendar; method=REQUEST; charset=UTF-8",
+            },
+          ],
+        },
+      ]);
+    } catch (err) {
+      // Don't let calendar invite failure abort PM schedule creation/update.
+      console.error("Failed to enqueue PM calendar invite email", err);
     }
   }
 

@@ -255,7 +255,12 @@ Deno.serve(async (req) => {
     const dashboard = new DashboardRepository(db);
     const sla = new SlaRepository(db);
     const pmSchedules = new PmScheduleRepository(db);
-    const pmScheduleService = new PmScheduleService(pmSchedules, locations);
+    const pmScheduleService = new PmScheduleService(
+      pmSchedules,
+      locations,
+      profiles,
+      workflowEmails,
+    );
     const rewards = new RewardRepository(db);
     const campaigns = new CampaignRepository(db);
 
@@ -483,6 +488,11 @@ Deno.serve(async (req) => {
       );
       if (!rule) throw new HttpError("SLA rule was not found.", 404);
       return json({ data: rule });
+    }
+
+    if (req.method === "GET" && pathname === "/pm/technicians") {
+      requireAdmin(profile);
+      return json({ data: await profiles.listApprovedByRole("technician") });
     }
 
     if (req.method === "GET" && pathname === "/pm/schedules") {
