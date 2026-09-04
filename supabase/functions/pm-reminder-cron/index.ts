@@ -187,8 +187,9 @@ serve(async (req: Request) => {
     );
   } catch (error) {
     console.error("PM reminder cron error:", error);
+    const errorMessage = error instanceof Error ? error.message : String(error);
     return new Response(
-      JSON.stringify({ success: false, error: error.message }),
+      JSON.stringify({ success: false, error: errorMessage }),
       {
         headers: { "Content-Type": "application/json" },
         status: 500,
