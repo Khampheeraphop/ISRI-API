@@ -37,6 +37,8 @@ import { DashboardRepository } from "./repositories/dashboardRepository.ts";
 import { SlaRepository } from "./repositories/slaRepository.ts";
 import { PmScheduleRepository } from "./repositories/pmScheduleRepository.ts";
 import { RewardRepository } from "./repositories/rewardRepository.ts";
+import { RewardEmailService } from "./services/rewardEmailService.ts";
+import { PmReminderService } from "./services/pmReminderService.ts";
 import {
   type CampaignInput,
   CampaignRepository,
@@ -253,6 +255,8 @@ Deno.serve(async (req) => {
     const notifications = new NotificationRepository(db);
     const emailOutbox = new EmailOutboxRepository(db);
     const workflowEmails = new WorkflowEmailService(emailOutbox);
+    const rewardEmails = new RewardEmailService(emailOutbox, db);
+    const pmReminders = new PmReminderService(emailOutbox, db);
     const workOrders = new WorkOrderRepository(db);
     const dashboard = new DashboardRepository(db);
     const sla = new SlaRepository(db);
@@ -263,7 +267,7 @@ Deno.serve(async (req) => {
       profiles,
       workflowEmails,
     );
-    const rewards = new RewardRepository(db);
+    const rewards = new RewardRepository(db, rewardEmails);
     const campaigns = new CampaignRepository(db);
 
     const withRewardImage = async (reward: Record<string, unknown>) => {
@@ -1655,6 +1659,26 @@ Deno.serve(async (req) => {
         ? Math.max(1, Math.min(25, requestedLimit))
         : 25;
       return json({ data: await workflowEmails.deliverPending(limit) });
+    }
+
+    if (
+      req.method === "POST" &&
+      pathname === "/admin/pm-reminders/check-due-soon"
+    ) {
+      requireAdmin(profile);
+      const body = await parseJson(req);
+      const daysAhead = Number(body?.daysAhead ?? 7);
+      const emailsSent = await pmReminders.checkPmDueSoon(daysAhead);
+      return json({ data: { emailsSent } });
+    }
+
+    if (
+      req.method === "POST" &&
+      pathname === "/admin/pm-reminders/check-overdue"
+    ) {
+      requireAdmin(profile);
+      const emailsSent = await pmReminders.checkPmOverdue();
+      return json({ data: { emailsSent } });
     }
 
     if (req.method === "GET" && pathname === "/admin/users") {

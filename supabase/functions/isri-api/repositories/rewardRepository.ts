@@ -1,11 +1,16 @@
 import type { DatabaseClient } from "../_shared/types.ts";
 import { throwRewardError } from "../_shared/rewardRules.ts";
+import { RewardEmailService } from "../services/rewardEmailService.ts";
+import { EmailOutboxRepository } from "./emailOutboxRepository.ts";
 
 const rewardColumns =
   "id, name, description, point_cost, stock, is_active, image_file_id, reward_period, created_at, updated_at, files(id, bucket, object_path, file_name, mime_type, size_bytes)";
 
 export class RewardRepository {
-  constructor(private readonly db: DatabaseClient) {}
+  constructor(
+    private readonly db: DatabaseClient,
+    private readonly emailService?: RewardEmailService,
+  ) {}
 
   async listCatalog(includeInactive = false) {
     let query = this.db
@@ -71,6 +76,29 @@ export class RewardRepository {
       p_requester_note: input.requesterNote,
     });
     if (error) throwRewardError(error);
+
+    // Send email notification
+    if (this.emailService && data) {
+      const redemptionId = (data as any).redemption_id;
+      const rewardItemId = (data as any).reward_item_id;
+
+      // Get reward info
+      const { data: reward } = await this.db
+        .from("reward_items")
+        .select("name, point_cost")
+        .eq("id", rewardItemId)
+        .single();
+
+      if (reward) {
+        await this.emailService.enqueueRedemptionSubmitted(
+          redemptionId,
+          userId,
+          reward.name,
+          reward.point_cost,
+        );
+      }
+    }
+
     return data;
   }
 
@@ -98,6 +126,53 @@ export class RewardRepository {
       p_admin_note: input.note,
     });
     if (error) throwRewardError(error);
+
+    // Send email notification
+    if (this.emailService) {
+      // Get redemption details
+      const { data: redemption } = await this.db
+        .from("reward_redemptions")
+        .select("user_id, reward_item_id, point_cost, fulfillment_method")
+        .eq("id", input.id)
+        .single();
+
+      if (redemption) {
+        // Get reward info
+        const { data: reward } = await this.db
+          .from("reward_items")
+          .select("name")
+          .eq("id", redemption.reward_item_id)
+          .single();
+
+        if (reward) {
+          if (input.status === "approved") {
+            await this.emailService.enqueueRedemptionApproved(
+              input.id,
+              redemption.user_id,
+              reward.name,
+              redemption.point_cost,
+              redemption.fulfillment_method,
+            );
+          } else if (input.status === "fulfilled") {
+            await this.emailService.enqueueRedemptionFulfilled(
+              input.id,
+              redemption.user_id,
+              reward.name,
+              input.note,
+            );
+          } else if (input.status === "cancelled") {
+            await this.emailService.enqueueRedemptionCancelled(
+              input.id,
+              redemption.user_id,
+              reward.name,
+              redemption.point_cost,
+              input.note || "ยกเลิกโดยผู้ดูแลระบบ",
+            );
+          }
+        }
+      }
+    }
+
     return data;
   }
 

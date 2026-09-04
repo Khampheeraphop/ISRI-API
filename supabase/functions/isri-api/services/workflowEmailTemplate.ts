@@ -12,13 +12,25 @@ export type EmailEventKey =
   | "rework_requested"
   | "repair_completed"
   | "pm_schedule_assigned"
-  | "pm_schedule_updated";
+  | "pm_schedule_updated"
+  | "reward_redemption_submitted"
+  | "reward_redemption_approved"
+  | "reward_redemption_fulfilled"
+  | "reward_redemption_cancelled"
+  | "pm_due_soon"
+  | "pm_overdue"
+  | "pm_completion_log"
+  | "user_account_approved"
+  | "user_account_rejected"
+  | "campaign_started"
+  | "campaign_ending_soon"
+  | "campaign_ended";
 
 export interface WorkflowEmailPayload {
   recipientName: string;
   ticketNumber?: string;
   reporterName?: string | null;
-  locationLabel: string;
+  locationLabel?: string | null; // Made optional for reward/campaign events
   assetName?: string | null;
   category?: string | null;
   urgencyLabel?: string | null;
@@ -28,6 +40,19 @@ export interface WorkflowEmailPayload {
   intervalMonths?: number | null;
   nextDueAt?: string | null;
   googleCalendarUrl?: string | null;
+  // Reward redemption specific fields
+  rewardName?: string | null;
+  pointCost?: number | null;
+  fulfillmentMethod?: string | null;
+  recipientContactName?: string | null; // For reward recipient contact
+  pointsEarned?: number | null;
+  balanceRemaining?: number | null;
+  // User account specific fields
+  userRole?: string | null;
+  rejectionReason?: string | null;
+  // Campaign specific fields
+  campaignName?: string | null;
+  campaignEndDate?: string | null;
 }
 
 export interface RenderedWorkflowEmail {
@@ -150,6 +175,102 @@ const configByEvent: Record<EmailEventKey, TemplateConfig> = {
       `แผนบำรุงรักษาเชิงป้องกัน (PM) สำหรับ ${p.assetName || "ครุภัณฑ์"} มีการปรับปรุงข้อมูลรอบตรวจเช็ค`,
     cta: "เปิดดูและบันทึกผล PM",
   },
+  reward_redemption_submitted: {
+    badge: "ขอแลกรางวัล",
+    badgeColor: "#5b3ea4",
+    title: "มีคำขอแลกรางวัลใหม่",
+    intro: (p) =>
+      `มีคำขอแลกรางวัล "${p.rewardName || "รางวัล"}" (${p.pointCost ?? 0} คะแนน) รออนุมัติ`,
+    cta: "พิจารณาคำขอแลกรางวัล",
+  },
+  reward_redemption_approved: {
+    badge: "อนุมัติแลกรางวัล",
+    badgeColor: "#257a57",
+    title: "คำขอแลกรางวัลได้รับอนุมัติแล้ว",
+    intro: (p) =>
+      `คำขอแลกรางวัล "${p.rewardName || "รางวัล"}" ได้รับอนุมัติแล้ว ${p.fulfillmentMethod === "delivery" ? "เราจะจัดส่งถึงที่อยู่ที่ระบุ" : "กรุณามารับรางวัลตามจุดรับที่กำหนด"}`,
+    cta: "ดูสถานะการแลกรางวัล",
+  },
+  reward_redemption_fulfilled: {
+    badge: "ส่งมอบรางวัลแล้ว",
+    badgeColor: "#257a57",
+    title: "รางวัลของคุณถูกส่งมอบแล้ว",
+    intro: (p) =>
+      `รางวัล "${p.rewardName || "รางวัล"}" ถูกส่งมอบเรียบร้อยแล้ว ${p.note ? `หมายเหตุ: ${p.note}` : ""}`,
+    cta: "ดูประวัติการแลกรางวัล",
+  },
+  reward_redemption_cancelled: {
+    badge: "ยกเลิกแลกรางวัล",
+    badgeColor: "#ba3d3d",
+    title: "คำขอแลกรางวัลถูกยกเลิก",
+    intro: (p) =>
+      `คำขอแลกรางวัล "${p.rewardName || "รางวัล"}" ถูกยกเลิก คะแนน ${p.pointCost ?? 0} คะแนนถูกคืนเข้าบัญชีของคุณแล้ว ${p.rejectionReason ? `เหตุผล: ${p.rejectionReason}` : ""}`,
+    cta: "ดูประวัติการแลกรางวัล",
+  },
+  pm_due_soon: {
+    badge: "PM ใกล้ครบกำหนด",
+    badgeColor: "#a76810",
+    title: "รอบตรวจเช็ค PM ใกล้ครบกำหนด",
+    intro: (p) =>
+      `รอบตรวจเช็ค PM สำหรับ ${p.assetName || "ครุภัณฑ์"} ที่ ${p.locationLabel} จะครบกำหนดในวันที่ ${p.nextDueAt ? p.nextDueAt.slice(0, 10) : "เร็วๆ นี้"}`,
+    cta: "เปิดดูและบันทึกผล PM",
+  },
+  pm_overdue: {
+    badge: "PM เกินกำหนด",
+    badgeColor: "#ba3d3d",
+    title: "รอบตรวจเช็ค PM เกินกำหนดแล้ว",
+    intro: (p) =>
+      `รอบตรวจเช็ค PM สำหรับ ${p.assetName || "ครุภัณฑ์"} ที่ ${p.locationLabel} ครบกำหนดวันที่ ${p.nextDueAt ? p.nextDueAt.slice(0, 10) : ""} แล้ว โปรดดำเนินการให้เร็วที่สุด`,
+    cta: "เปิดดูและบันทึกผล PM",
+  },
+  pm_completion_log: {
+    badge: "บันทึกผล PM",
+    badgeColor: "#257a57",
+    title: "มีการบันทึกผลการตรวจเช็ค PM",
+    intro: (p) =>
+      `ผู้ปฏิบัติงาน ${p.actionByName || "ช่าง"} ได้บันทึกผลการตรวจเช็ค PM สำหรับ ${p.assetName || "ครุภัณฑ์"} ที่ ${p.locationLabel} เรียบร้อยแล้ว`,
+    cta: "ดูรายละเอียดการบันทึกผล",
+  },
+  user_account_approved: {
+    badge: "บัญชีอนุมัติแล้ว",
+    badgeColor: "#257a57",
+    title: "บัญชีผู้ใช้ของคุณได้รับอนุมัติแล้ว",
+    intro: (p) =>
+      `บัญชีผู้ใช้ของคุณได้รับอนุมัติในบทบาท ${p.userRole || "ผู้ใช้"} แล้ว คุณสามารถเข้าใช้งานระบบได้ทันที`,
+    cta: "เข้าสู่ระบบ ISRI",
+  },
+  user_account_rejected: {
+    badge: "บัญชีไม่อนุมัติ",
+    badgeColor: "#ba3d3d",
+    title: "บัญชีผู้ใช้ของคุณไม่ได้รับอนุมัติ",
+    intro: (p) =>
+      `บัญชีผู้ใช้ของคุณไม่ได้รับอนุมัติ ${p.rejectionReason ? `เหตุผล: ${p.rejectionReason}` : ""}`,
+    cta: "ติดต่อผู้ดูแลระบบ",
+  },
+  campaign_started: {
+    badge: "แคมเปญเริ่มต้น",
+    badgeColor: "#5b3ea4",
+    title: "แคมเปญใหม่เริ่มต้นแล้ว",
+    intro: (p) =>
+      `แคมเปญ "${p.campaignName || "แคมเปญ"}" เริ่มต้นแล้ว! สะสมคะแนนเพื่อรับรางวัลพิเศษ`,
+    cta: "ดูรายละเอียดแคมเปญ",
+  },
+  campaign_ending_soon: {
+    badge: "แคมเปญใกล้สิ้นสุด",
+    badgeColor: "#a76810",
+    title: "แคมเปญใกล้สิ้นสุดแล้ว",
+    intro: (p) =>
+      `แคมเปญ "${p.campaignName || "แคมเปญ"}" จะสิ้นสุดในวันที่ ${p.campaignEndDate ? p.campaignEndDate.slice(0, 10) : "เร็วๆ นี้"} สะสมคะแนนให้ครบก่อนจะสายเกินไป!`,
+    cta: "ดูอันดับและคะแนน",
+  },
+  campaign_ended: {
+    badge: "แคมเปญสิ้นสุด",
+    badgeColor: "#365f91",
+    title: "แคมเปญสิ้นสุดแล้ว",
+    intro: (p) =>
+      `แคมเปญ "${p.campaignName || "แคมเปญ"}" สิ้นสุดแล้ว ขอบคุณที่ร่วมสนุก! ตรวจสอบผู้ชนะและรางวัลได้ที่หน้าแคมเปญ`,
+    cta: "ดูผลสรุปแคมเปญ",
+  },
 };
 
 export function renderWorkflowEmail(
@@ -158,36 +279,105 @@ export function renderWorkflowEmail(
 ): RenderedWorkflowEmail {
   const config = configByEvent[eventKey];
   const isPm =
-    eventKey === "pm_schedule_assigned" || eventKey === "pm_schedule_updated";
-  const subject = payload.ticketNumber
-    ? `[ISRI] ${config.title} · ${payload.ticketNumber}`
-    : `[ISRI] ${config.title} · ${payload.assetName || "PM"} (${payload.locationLabel})`;
+    eventKey === "pm_schedule_assigned" ||
+    eventKey === "pm_schedule_updated" ||
+    eventKey === "pm_due_soon" ||
+    eventKey === "pm_overdue" ||
+    eventKey === "pm_completion_log";
+  const isReward = eventKey.startsWith("reward_redemption");
+  const isUserAccount = eventKey.startsWith("user_account");
+  const isCampaign = eventKey.startsWith("campaign");
 
-  const detailRows = isPm
-    ? [
-        ["ครุภัณฑ์/อุปกรณ์", payload.assetName],
-        ["สถานที่", payload.locationLabel],
-        [
-          "รอบการตรวจเช็ค",
-          payload.intervalMonths ? `ทุก ${payload.intervalMonths} เดือน` : null,
-        ],
-        [
-          "ครบกำหนดรอบถัดไป",
-          payload.nextDueAt ? payload.nextDueAt.slice(0, 10) : null,
-        ],
-        ["รายละเอียดแผนงาน", payload.note],
-        ["ผู้มอบหมาย", payload.actionByName],
-      ].filter(([, value]) => Boolean(value && String(value).trim()))
-    : [
-        ["เลขที่แจ้ง", payload.ticketNumber],
-        ["ผู้แจ้งเหตุ", payload.reporterName],
-        ["สถานที่", payload.locationLabel],
-        ["อุปกรณ์/จุดแจ้ง", payload.assetName],
-        ["ประเภทปัญหา", payload.category],
-        ["ระดับความเร่งด่วน", payload.urgencyLabel],
-        ["ผู้ดำเนินการ", payload.actionByName],
-        ["รายละเอียดเพิ่มเติม", payload.note],
-      ].filter(([, value]) => Boolean(value && String(value).trim()));
+  let subject: string;
+  if (payload.ticketNumber) {
+    subject = `[ISRI] ${config.title} · ${payload.ticketNumber}`;
+  } else if (isReward) {
+    subject = `[ISRI] ${config.title} · ${payload.rewardName || "รางวัล"}`;
+  } else if (isCampaign) {
+    subject = `[ISRI] ${config.title} · ${payload.campaignName || "แคมเปญ"}`;
+  } else if (isPm) {
+    subject = `[ISRI] ${config.title} · ${payload.assetName || "PM"} (${payload.locationLabel})`;
+  } else {
+    subject = `[ISRI] ${config.title}`;
+  }
+
+  let detailRows: Array<[string, string | null | undefined]>;
+
+  if (isReward) {
+    detailRows = [
+      ["รางวัล", payload.rewardName],
+      ["คะแนนที่ใช้", payload.pointCost ? `${payload.pointCost} คะแนน` : null],
+      [
+        "วิธีรับ",
+        payload.fulfillmentMethod === "delivery" ? "จัดส่ง" : "รับเอง",
+      ],
+      ["ชื่อผู้รับ", payload.recipientContactName],
+      [
+        "สถานะปัจจุบัน",
+        eventKey === "reward_redemption_approved"
+          ? "อนุมัติแล้ว"
+          : eventKey === "reward_redemption_fulfilled"
+            ? "ส่งมอบแล้ว"
+            : eventKey === "reward_redemption_cancelled"
+              ? "ยกเลิกแล้ว"
+              : "รออนุมัติ",
+      ],
+      [
+        "คะแนนคงเหลือ",
+        payload.balanceRemaining ? `${payload.balanceRemaining} คะแนน` : null,
+      ],
+      ["หมายเหตุ", payload.note],
+      ["เหตุผลการยกเลิก", payload.rejectionReason],
+    ].filter(([, value]) => Boolean(value && String(value).trim()));
+  } else if (isUserAccount) {
+    detailRows = [
+      ["บทบาท", payload.userRole],
+      ["ชื่อผู้ใช้", payload.recipientName],
+      ["เหตุผลการปฏิเสธ", payload.rejectionReason],
+    ].filter(([, value]) => Boolean(value && String(value).trim()));
+  } else if (isCampaign) {
+    detailRows = [
+      ["ชื่อแคมเปญ", payload.campaignName],
+      [
+        "วันสิ้นสุด",
+        payload.campaignEndDate ? payload.campaignEndDate.slice(0, 10) : null,
+      ],
+    ].filter(([, value]) => Boolean(value && String(value).trim()));
+  } else if (isPm) {
+    detailRows = [
+      ["ครุภัณฑ์/อุปกรณ์", payload.assetName],
+      ["สถานที่", payload.locationLabel],
+      [
+        "รอบการตรวจเช็ค",
+        payload.intervalMonths ? `ทุก ${payload.intervalMonths} เดือน` : null,
+      ],
+      [
+        "ครบกำหนดรอบถัดไป",
+        payload.nextDueAt ? payload.nextDueAt.slice(0, 10) : null,
+      ],
+      ["รายละเอียดแผนงาน", payload.note],
+      ["ผู้ปฏิบัติงาน", payload.actionByName],
+      [
+        "คะแนนที่ได้รับ",
+        payload.pointsEarned ? `${payload.pointsEarned} คะแนน` : null,
+      ],
+      [
+        "ยอดคงเหลือ",
+        payload.balanceRemaining ? `${payload.balanceRemaining} คะแนน` : null,
+      ],
+    ].filter(([, value]) => Boolean(value && String(value).trim()));
+  } else {
+    detailRows = [
+      ["เลขที่แจ้ง", payload.ticketNumber],
+      ["ผู้แจ้งเหตุ", payload.reporterName],
+      ["สถานที่", payload.locationLabel],
+      ["อุปกรณ์/จุดแจ้ง", payload.assetName],
+      ["ประเภทปัญหา", payload.category],
+      ["ระดับความเร่งด่วน", payload.urgencyLabel],
+      ["ผู้ดำเนินการ", payload.actionByName],
+      ["รายละเอียดเพิ่มเติม", payload.note],
+    ].filter(([, value]) => Boolean(value && String(value).trim()));
+  }
 
   const intro = config.intro(payload);
   const htmlRows = detailRows
@@ -205,9 +395,19 @@ export function renderWorkflowEmail(
     .map(([label, value]) => `${label}: ${String(value)}`)
     .join("\n");
   const safeUrl = escapeAttribute(payload.actionUrl);
-  const cardHeaderTitle = payload.ticketNumber
-    ? `รายละเอียดรายการ · ${escapeHtml(payload.ticketNumber)}`
-    : `รายละเอียดรอบตรวจเช็ค PM · ${escapeHtml(payload.assetName || "")}`;
+
+  let cardHeaderTitle: string;
+  if (payload.ticketNumber) {
+    cardHeaderTitle = `รายละเอียดรายการ · ${escapeHtml(payload.ticketNumber)}`;
+  } else if (isReward) {
+    cardHeaderTitle = `รายละเอียดการแลกรางวัล · ${escapeHtml(payload.rewardName || "")}`;
+  } else if (isCampaign) {
+    cardHeaderTitle = `รายละเอียดแคมเปญ · ${escapeHtml(payload.campaignName || "")}`;
+  } else if (isPm) {
+    cardHeaderTitle = `รายละเอียดรอบตรวจเช็ค PM · ${escapeHtml(payload.assetName || "")}`;
+  } else {
+    cardHeaderTitle = `รายละเอียด`;
+  }
 
   const gcalHtml = payload.googleCalendarUrl
     ? `
