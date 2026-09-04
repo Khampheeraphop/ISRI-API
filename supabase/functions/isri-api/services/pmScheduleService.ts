@@ -10,14 +10,31 @@ export type PmScheduleInput = {
   assetName: string;
   planDetails: string;
   intervalMonths: number;
-  lastDoneAt: string;
+  lastDoneAt: string | null;
+  nextDueAt?: string;
   assignedTechnicianId?: string | null;
 };
 
-function addMonths(date: Date, months: number) {
-  const next = new Date(date);
-  next.setMonth(next.getMonth() + months);
-  return next;
+export function addMonths(date: Date, months: number) {
+  // Shift to Thai wall time before month arithmetic, then convert back to UTC.
+  const next = new Date(date.getTime() + 7 * 60 * 60 * 1000);
+  const day = next.getUTCDate();
+  next.setUTCDate(1);
+  next.setUTCMonth(next.getUTCMonth() + months);
+  const lastDay = new Date(
+    Date.UTC(next.getUTCFullYear(), next.getUTCMonth() + 1, 0),
+  ).getUTCDate();
+  next.setUTCDate(Math.min(day, lastDay));
+  return new Date(next.getTime() - 7 * 60 * 60 * 1000);
+}
+
+export function requirePmAssignment(
+  schedule: { assigned_technician_id?: string | null },
+  technicianId: string,
+) {
+  if (schedule.assigned_technician_id !== technicianId) {
+    throw new HttpError("This PM plan is not assigned to you.", 403);
+  }
 }
 
 export function parsePmScheduleInput(
@@ -32,36 +49,58 @@ export function parsePmScheduleInput(
   const intervalMonths = Number(body?.intervalMonths);
   const lastDoneAt =
     typeof body?.lastDoneAt === "string" ? body.lastDoneAt : "";
-  const completedDate = new Date(lastDoneAt);
+  const completedDate = lastDoneAt ? new Date(lastDoneAt) : null;
+  const dueDate =
+    typeof body?.nextDueAt === "string" ? new Date(body.nextDueAt) : null;
   const rawTechnicianId = body?.assignedTechnicianId;
   const assignedTechnicianId =
     typeof rawTechnicianId === "string" && rawTechnicianId.trim()
       ? rawTechnicianId.trim()
       : null;
 
-  if (!/^[0-9a-f-]{36}$/i.test(locationId))
+  if (!/^[0-9a-f-]{36}$/i.test(locationId)) {
     throw new HttpError("PM location is invalid.");
-  if (assetName.length < 2 || assetName.length > 200)
+  }
+  if (assetName.length < 2 || assetName.length > 200) {
     throw new HttpError("PM asset name must contain 2–200 characters.");
-  if (planDetails.length < 10 || planDetails.length > 2000)
+  }
+  if (planDetails.length < 10 || planDetails.length > 2000) {
     throw new HttpError("PM plan details must contain 10–2,000 characters.");
+  }
   if (
     !Number.isInteger(intervalMonths) ||
     intervalMonths < 1 ||
     intervalMonths > 60
-  )
+  ) {
     throw new HttpError("PM interval must be between 1 and 60 months.");
-  if (Number.isNaN(completedDate.getTime()) || completedDate > new Date())
+  }
+  if (
+    completedDate &&
+    (Number.isNaN(completedDate.getTime()) || completedDate > new Date())
+  ) {
     throw new HttpError("PM completion date is invalid.");
-  if (assignedTechnicianId && !/^[0-9a-f-]{36}$/i.test(assignedTechnicianId))
+  }
+  if (
+    (!dueDate && !completedDate) ||
+    (dueDate &&
+      (Number.isNaN(dueDate.getTime()) ||
+        (completedDate && dueDate <= completedDate)))
+  ) {
+    throw new HttpError(
+      "PM next due date must be valid and after the last completion.",
+    );
+  }
+  if (assignedTechnicianId && !/^[0-9a-f-]{36}$/i.test(assignedTechnicianId)) {
     throw new HttpError("PM assigned technician is invalid.");
+  }
 
   return {
     locationId,
     assetName,
     planDetails,
     intervalMonths,
-    lastDoneAt: completedDate.toISOString(),
+    lastDoneAt: completedDate?.toISOString() ?? null,
+    nextDueAt: dueDate?.toISOString(),
     assignedTechnicianId,
   };
 }
@@ -107,12 +146,15 @@ export class PmScheduleService {
   ) {
     const schedule = await this.schedules.findSchedule(scheduleId);
     if (!schedule) throw new HttpError("PM schedule was not found.", 404);
+    requirePmAssignment(schedule, technicianId);
     const normalizedNotes = notes.trim();
     const completedDate = new Date(completedAt);
-    if (normalizedNotes.length < 10 || normalizedNotes.length > 4000)
+    if (normalizedNotes.length < 10 || normalizedNotes.length > 4000) {
       throw new HttpError("PM notes must contain 10–4,000 characters.");
-    if (Number.isNaN(completedDate.getTime()) || completedDate > new Date())
+    }
+    if (Number.isNaN(completedDate.getTime()) || completedDate > new Date()) {
       throw new HttpError("PM completion date is invalid.");
+    }
 
     const log = await this.schedules.recordCompletion({
       scheduleId,
@@ -121,8 +163,9 @@ export class PmScheduleService {
       notes: normalizedNotes,
     });
     const updatedSchedule = await this.schedules.findSchedule(scheduleId);
-    if (!updatedSchedule)
+    if (!updatedSchedule) {
       throw new HttpError("PM schedule was not found after completion.", 404);
+    }
     return { schedule: updatedSchedule, log };
   }
 
@@ -229,11 +272,15 @@ export class PmScheduleService {
   private async buildValues(input: PmScheduleInput) {
     const location = await this.locations.findById(input.locationId);
     if (!location) throw new HttpError("PM location was not found.", 404);
-    const lastDoneAt = new Date(input.lastDoneAt);
     return {
       ...input,
       locationLabel: `${location.building} · ${location.floor} · ${location.zone}`,
-      nextDueAt: addMonths(lastDoneAt, input.intervalMonths).toISOString(),
+      nextDueAt:
+        input.nextDueAt ??
+        addMonths(
+          new Date(input.lastDoneAt!),
+          input.intervalMonths,
+        ).toISOString(),
     };
   }
 }

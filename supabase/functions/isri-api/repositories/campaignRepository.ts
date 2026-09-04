@@ -69,6 +69,7 @@ export class CampaignRepository {
   }
 
   async update(id: string, input: CampaignInput) {
+    await this.finalizeExpired();
     const { data, error } = await this.db
       .from("reward_campaigns")
       .update({

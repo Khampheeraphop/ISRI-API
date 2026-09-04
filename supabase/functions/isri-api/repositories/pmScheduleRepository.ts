@@ -8,12 +8,14 @@ const logColumns =
 export class PmScheduleRepository {
   constructor(private readonly db: DatabaseClient) {}
 
-  async listSchedules() {
-    const { data, error } = await this.db
+  async listSchedules(technicianId?: string) {
+    let query = this.db
       .from("pm_schedules")
       .select(scheduleColumns)
       // PM is an operational queue, so preserve first-created-first-served.
-      .order("created_at", { ascending: true });
+      .order("next_due_at", { ascending: true });
+    if (technicianId) query = query.eq("assigned_technician_id", technicianId);
+    const { data, error } = await query;
     if (error) throw error;
     return data ?? [];
   }
@@ -50,7 +52,7 @@ export class PmScheduleRepository {
     assetName: string;
     planDetails: string;
     intervalMonths: number;
-    lastDoneAt: string;
+    lastDoneAt: string | null;
     nextDueAt: string;
     assignedTechnicianId?: string | null;
   }) {
@@ -80,7 +82,7 @@ export class PmScheduleRepository {
       assetName: string;
       planDetails: string;
       intervalMonths: number;
-      lastDoneAt: string;
+      lastDoneAt: string | null;
       nextDueAt: string;
       assignedTechnicianId?: string | null;
     },
@@ -93,7 +95,6 @@ export class PmScheduleRepository {
         asset_name: input.assetName,
         plan_details: input.planDetails,
         interval_months: input.intervalMonths,
-        last_done_at: input.lastDoneAt,
         next_due_at: input.nextDueAt,
         assigned_technician_id: input.assignedTechnicianId ?? null,
         updated_at: new Date().toISOString(),

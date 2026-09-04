@@ -32,6 +32,7 @@ import {
   type QueuedWorkflowEmail,
 } from "./repositories/emailOutboxRepository.ts";
 import { WorkOrderRepository } from "./repositories/workOrderRepository.ts";
+import { ActivityHistoryRepository } from "./repositories/activityHistoryRepository.ts";
 import { DashboardRepository } from "./repositories/dashboardRepository.ts";
 import { SlaRepository } from "./repositories/slaRepository.ts";
 import { PmScheduleRepository } from "./repositories/pmScheduleRepository.ts";
@@ -44,6 +45,7 @@ import { validateWorkOrderAction } from "./services/workOrderWorkflowService.ts"
 import {
   parsePmScheduleInput,
   PmScheduleService,
+  requirePmAssignment,
 } from "./services/pmScheduleService.ts";
 import { validateFulfillment } from "./_shared/rewardRules.ts";
 import { WorkflowEmailService } from "./services/workflowEmailService.ts";
@@ -324,8 +326,9 @@ Deno.serve(async (req) => {
             }
           : null,
         events: await Promise.all(
-          timelineEvents.map(async (event) => ({
+          timelineEvents.map(async (event, index) => ({
             ...event,
+            previous_status: timelineEvents[index - 1]?.status ?? null,
             changed_by_name: event.changed_by
               ? (names.get(event.changed_by) ?? "ผู้ใช้งานระบบ")
               : "ระบบ",
@@ -497,7 +500,11 @@ Deno.serve(async (req) => {
 
     if (req.method === "GET" && pathname === "/pm/schedules") {
       requirePmViewer(profile);
-      return json({ data: await pmSchedules.listSchedules() });
+      return json({
+        data: await pmSchedules.listSchedules(
+          profile.role === "technician" ? profile.id : undefined,
+        ),
+      });
     }
     if (req.method === "POST" && pathname === "/pm/schedules") {
       requireAdmin(profile);
@@ -517,6 +524,9 @@ Deno.serve(async (req) => {
       requirePmViewer(profile);
       const schedule = await pmSchedules.findSchedule(pmScheduleMatch[1]);
       if (!schedule) throw new HttpError("PM schedule was not found.", 404);
+      if (profile.role === "technician") {
+        requirePmAssignment(schedule, profile.id);
+      }
       return json({
         data: {
           schedule,
@@ -525,10 +535,28 @@ Deno.serve(async (req) => {
       });
     }
     if (req.method === "PATCH" && pmScheduleMatch) {
-      requireAdmin(profile);
+      requirePmViewer(profile);
+      const existing = await pmSchedules.findSchedule(pmScheduleMatch[1]);
+      if (!existing) throw new HttpError("PM schedule was not found.", 404);
+      if (profile.role === "technician") {
+        requirePmAssignment(existing, profile.id);
+      }
+      const body = await parseJson(req);
+      const input = parsePmScheduleInput({
+        ...body,
+        // Execution history is written only through the completion endpoint.
+        lastDoneAt: existing.last_done_at,
+        ...(profile.role === "technician"
+          ? {
+              locationId: existing.location_id,
+              assetName: existing.asset_name,
+              assignedTechnicianId: existing.assigned_technician_id,
+            }
+          : {}),
+      });
       const schedule = await pmScheduleService.update(
         pmScheduleMatch[1],
-        parsePmScheduleInput(await parseJson(req)),
+        input,
       );
       if (!schedule) throw new HttpError("PM schedule was not found.", 404);
       return json({ data: schedule });
@@ -621,7 +649,11 @@ Deno.serve(async (req) => {
       const status = body?.status;
       const note =
         typeof body?.note === "string" ? body.note.trim() || null : null;
-      if (status !== "fulfilled" && status !== "cancelled") {
+      if (
+        status !== "approved" &&
+        status !== "fulfilled" &&
+        status !== "cancelled"
+      ) {
         throw new HttpError("Redemption status is invalid.");
       }
       if (note && note.length > 500) {
@@ -1122,14 +1154,16 @@ Deno.serve(async (req) => {
         if (
           message === "Incident is not available for assignment." ||
           message === "SLA rule was not configured."
-        )
+        ) {
           throw new HttpError(message, 409);
+        }
         if (
           message === "Technician assignments are invalid." ||
           message ===
             "Technician specialty does not match the incident category."
-        )
+        ) {
           throw new HttpError(message, 422);
+        }
         throw assignmentError;
       }
       const assigned = Array.isArray(data) ? data[0] : data;
@@ -1166,6 +1200,54 @@ Deno.serve(async (req) => {
         ]);
       }
       return json({ data: assigned }, 201);
+    }
+    const activityDetailMatch = pathname.match(
+      /^\/activity-history\/([0-9a-f-]{36})$/i,
+    );
+    if (
+      req.method === "GET" &&
+      (pathname === "/activity-history" || activityDetailMatch)
+    ) {
+      if (!isApproved(profile))
+        throw new HttpError("Approved access is required.", 403);
+      const activity = new ActivityHistoryRepository(db);
+      const rows = await activity.listForActor(
+        profile.id,
+        profile.role as AppRole,
+        activityDetailMatch?.[1],
+      );
+      if (activityDetailMatch && !rows.length)
+        throw new HttpError("History was not found.", 404);
+      const names = await profiles.namesByIds(
+        rows.flatMap((row) =>
+          [row.latestEvent.changed_by, row.myLatestEvent?.changed_by].filter(
+            (id): id is string => Boolean(id),
+          ),
+        ),
+      );
+      const records = rows.map((row) => ({
+        ...row,
+        latestEvent: {
+          ...row.latestEvent,
+          changed_by_name: row.latestEvent.changed_by
+            ? (names.get(row.latestEvent.changed_by) ?? "ผู้ใช้งานระบบ")
+            : "ระบบ",
+        },
+        myLatestEvent: row.myLatestEvent
+          ? {
+              ...row.myLatestEvent,
+              changed_by_name: names.get(profile.id) ?? "คุณ",
+            }
+          : null,
+      }));
+      if (activityDetailMatch)
+        return json({
+          data: {
+            incident: records[0],
+            ...(await historyWithActors(records[0].id)),
+          },
+        });
+      return json({ data: records });
     }
     if (req.method === "GET" && pathname === "/work-orders/mine") {
       if (!isApproved(profile) || profile.role !== "technician") {

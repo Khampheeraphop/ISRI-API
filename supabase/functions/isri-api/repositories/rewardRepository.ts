@@ -1,4 +1,5 @@
 import type { DatabaseClient } from "../_shared/types.ts";
+import { throwRewardError } from "../_shared/rewardRules.ts";
 
 const rewardColumns =
   "id, name, description, point_cost, stock, is_active, image_file_id, reward_period, created_at, updated_at, files(id, bucket, object_path, file_name, mime_type, size_bytes)";
@@ -34,7 +35,7 @@ export class RewardRepository {
       this.db
         .from("reward_redemptions")
         .select(
-          "id, reward_item_id, status, fulfillment_method, recipient_name, phone, delivery_address, requester_note, admin_note, redeemed_at, fulfilled_at, cancelled_at, reward_items(name, point_cost)",
+          "id, reward_item_id, status, point_cost, approved_at, fulfillment_method, recipient_name, phone, delivery_address, requester_note, admin_note, redeemed_at, fulfilled_at, cancelled_at, reward_items(name, point_cost)",
         )
         .eq("user_id", userId)
         .order("redeemed_at", { ascending: false }),
@@ -69,7 +70,7 @@ export class RewardRepository {
       p_delivery_address: input.deliveryAddress,
       p_requester_note: input.requesterNote,
     });
-    if (error) throw error;
+    if (error) throwRewardError(error);
     return data;
   }
 
@@ -77,7 +78,7 @@ export class RewardRepository {
     const { data, error } = await this.db
       .from("reward_redemptions")
       .select(
-        "id, user_id, reward_item_id, status, fulfillment_method, recipient_name, phone, delivery_address, requester_note, admin_note, redeemed_at, fulfilled_at, cancelled_at, profiles!reward_redemptions_user_id_fkey(full_name, email), reward_items(name, point_cost)",
+        "id, user_id, reward_item_id, status, point_cost, approved_at, fulfillment_method, recipient_name, phone, delivery_address, requester_note, admin_note, redeemed_at, fulfilled_at, cancelled_at, profiles!reward_redemptions_user_id_fkey(full_name, email), reward_items(name, point_cost)",
       )
       .order("redeemed_at", { ascending: false });
     if (error) throw error;
@@ -86,7 +87,7 @@ export class RewardRepository {
 
   async updateRedemptionStatus(input: {
     id: string;
-    status: "fulfilled" | "cancelled";
+    status: "approved" | "fulfilled" | "cancelled";
     actorId: string;
     note: string | null;
   }) {
@@ -96,7 +97,7 @@ export class RewardRepository {
       p_actor_id: input.actorId,
       p_admin_note: input.note,
     });
-    if (error) throw error;
+    if (error) throwRewardError(error);
     return data;
   }
 
