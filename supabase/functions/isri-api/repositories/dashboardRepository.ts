@@ -86,8 +86,12 @@ export class DashboardRepository {
 
   async summary(periodMonth: string) {
     const now = new Date();
-    const pmDueSoonUntil = new Date(now);
-    pmDueSoonUntil.setUTCDate(pmDueSoonUntil.getUTCDate() + 30);
+    const thaiToday = new Date(now.getTime() + 7 * 3600000)
+      .toISOString()
+      .slice(0, 10);
+    const pmToday = new Date(thaiToday + "T00:00:00+07:00");
+    const pmDueSoonUntil = new Date(pmToday);
+    pmDueSoonUntil.setUTCDate(pmDueSoonUntil.getUTCDate() + 31);
     const { since, until } = getDashboardMonthRange(periodMonth);
 
     const [
@@ -160,36 +164,38 @@ export class DashboardRepository {
       this.db
         .from("pm_schedules")
         .select("id, location_label, asset_name, next_due_at")
-        .lte("next_due_at", pmDueSoonUntil.toISOString())
+        .lt("next_due_at", pmDueSoonUntil.toISOString())
         .order("next_due_at")
         .limit(5),
       this.db
         .from("pm_schedules")
         .select("id", { count: "exact", head: true })
-        .lt("next_due_at", now.toISOString()),
+        .lt("next_due_at", pmToday.toISOString()),
       this.db
         .from("pm_schedules")
         .select("id", { count: "exact", head: true })
-        .gte("next_due_at", now.toISOString())
-        .lte("next_due_at", pmDueSoonUntil.toISOString()),
+        .gte("next_due_at", pmToday.toISOString())
+        .lt("next_due_at", pmDueSoonUntil.toISOString()),
     ]);
 
-    for (const result of [
-      incidentsResult,
-      openIncidentsResult,
-      activeWorkOrdersResult,
-      periodWorkOrdersResult,
-      recentHistoryResult,
-      techniciansResult,
-      pointWalletsResult,
-      pointTransactionsResult,
-      rewardRedemptionsResult,
-      activeRewardsResult,
-      activeCampaignsResult,
-      pmSchedulesResult,
-      overduePmCountResult,
-      dueSoonPmCountResult,
-    ]) {
+    for (
+      const result of [
+        incidentsResult,
+        openIncidentsResult,
+        activeWorkOrdersResult,
+        periodWorkOrdersResult,
+        recentHistoryResult,
+        techniciansResult,
+        pointWalletsResult,
+        pointTransactionsResult,
+        rewardRedemptionsResult,
+        activeRewardsResult,
+        activeCampaignsResult,
+        pmSchedulesResult,
+        overduePmCountResult,
+        dueSoonPmCountResult,
+      ]
+    ) {
       if (result.error) throw result.error;
     }
 
@@ -219,22 +225,22 @@ export class DashboardRepository {
     ];
     const [recentOrdersResult, recentOrderHistoryResult] = recentOrderIds.length
       ? await Promise.all([
-          this.db
-            .from("work_orders")
-            .select(
-              "id, incident_id, technician_id, status, respond_due_at, resolve_due_at, assigned_at, created_at",
-            )
-            .in("id", recentOrderIds),
-          this.db
-            .from("work_order_history")
-            .select("work_order_id, status, changed_at")
-            .in("work_order_id", recentOrderIds)
-            .order("changed_at"),
-        ])
+        this.db
+          .from("work_orders")
+          .select(
+            "id, incident_id, technician_id, status, respond_due_at, resolve_due_at, assigned_at, created_at",
+          )
+          .in("id", recentOrderIds),
+        this.db
+          .from("work_order_history")
+          .select("work_order_id, status, changed_at")
+          .in("work_order_id", recentOrderIds)
+          .order("changed_at"),
+      ])
       : [
-          { data: [], error: null },
-          { data: [], error: null },
-        ];
+        { data: [], error: null },
+        { data: [], error: null },
+      ];
     if (recentOrdersResult.error) throw recentOrdersResult.error;
     if (recentOrderHistoryResult.error) throw recentOrderHistoryResult.error;
 
@@ -244,9 +250,9 @@ export class DashboardRepository {
     ];
     const recentIncidentsResult = recentIncidentIds.length
       ? await this.db
-          .from("incidents")
-          .select("id, created_at")
-          .in("id", recentIncidentIds)
+        .from("incidents")
+        .select("id, created_at")
+        .in("id", recentIncidentIds)
       : { data: [], error: null };
     if (recentIncidentsResult.error) throw recentIncidentsResult.error;
     const fullRecentOrderHistory = (recentOrderHistoryResult.data ??
@@ -327,15 +333,15 @@ export class DashboardRepository {
     ).length;
     const averageResponseMinutes = responded.length
       ? Math.round(
-          responded.reduce(
-            (sum, { occurredAt, incidentCreatedAt }) =>
-              sum +
-              (new Date(occurredAt).getTime() -
+        responded.reduce(
+          (sum, { occurredAt, incidentCreatedAt }) =>
+            sum +
+            (new Date(occurredAt).getTime() -
                 new Date(incidentCreatedAt).getTime()) /
-                60000,
-            0,
-          ) / responded.length,
-        )
+              60000,
+          0,
+        ) / responded.length,
+      )
       : null;
     const resolutionOnTime = completed.filter(
       ({ order, occurredAt }) =>
@@ -343,15 +349,15 @@ export class DashboardRepository {
     ).length;
     const averageClosureMinutes = completed.length
       ? Math.round(
-          completed.reduce(
-            (sum, { occurredAt, incidentCreatedAt }) =>
-              sum +
-              (new Date(occurredAt).getTime() -
+        completed.reduce(
+          (sum, { occurredAt, incidentCreatedAt }) =>
+            sum +
+            (new Date(occurredAt).getTime() -
                 new Date(incidentCreatedAt).getTime()) /
-                60000,
-            0,
-          ) / completed.length,
-        )
+              60000,
+          0,
+        ) / completed.length,
+      )
       : null;
 
     const hotspotMap = new Map<
@@ -372,17 +378,19 @@ export class DashboardRepository {
         openCount: 0,
       };
       current.count += 1;
-      if (!["done", "rejected"].includes(incident.status))
+      if (!["done", "rejected"].includes(incident.status)) {
         current.openCount += 1;
+      }
       hotspotMap.set(key, current);
     }
 
     const workloadByTechnician = new Map<string, number>();
-    for (const order of periodWorkOrders)
+    for (const order of periodWorkOrders) {
       workloadByTechnician.set(
         order.technician_id,
         (workloadByTechnician.get(order.technician_id) ?? 0) + 1,
       );
+    }
 
     return {
       generatedAt: now.toISOString(),
@@ -423,7 +431,9 @@ export class DashboardRepository {
           locationLabel: schedule.location_label,
           assetName: schedule.asset_name,
           nextDueAt: schedule.next_due_at,
-          state: new Date(schedule.next_due_at) < now ? "overdue" : "due_soon",
+          state: new Date(schedule.next_due_at) < pmToday
+            ? "overdue"
+            : "due_soon",
         })),
       },
       technicianWorkload: technicians
