@@ -219,6 +219,7 @@ export class PmScheduleService {
           ],
         },
       ]);
+      await this.workflowEmails.deliverPending();
     } catch (err) {
       // Don't let calendar invite failure abort PM schedule creation/update.
       console.error("Failed to enqueue PM calendar invite email", err);
