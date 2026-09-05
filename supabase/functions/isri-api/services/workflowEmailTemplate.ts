@@ -328,13 +328,13 @@ export function renderWorkflowEmail(
       ],
       ["หมายเหตุ", payload.note],
       ["เหตุผลการยกเลิก", payload.rejectionReason],
-    ].filter(([, value]) => Boolean(value && String(value).trim()));
+    ];
   } else if (isUserAccount) {
     detailRows = [
       ["บทบาท", payload.userRole],
       ["ชื่อผู้ใช้", payload.recipientName],
       ["เหตุผลการปฏิเสธ", payload.rejectionReason],
-    ].filter(([, value]) => Boolean(value && String(value).trim()));
+    ];
   } else if (isCampaign) {
     detailRows = [
       ["ชื่อแคมเปญ", payload.campaignName],
@@ -342,7 +342,7 @@ export function renderWorkflowEmail(
         "วันสิ้นสุด",
         payload.campaignEndDate ? payload.campaignEndDate.slice(0, 10) : null,
       ],
-    ].filter(([, value]) => Boolean(value && String(value).trim()));
+    ];
   } else if (isPm) {
     detailRows = [
       ["ครุภัณฑ์/อุปกรณ์", payload.assetName],
@@ -365,7 +365,7 @@ export function renderWorkflowEmail(
         "ยอดคงเหลือ",
         payload.balanceRemaining ? `${payload.balanceRemaining} คะแนน` : null,
       ],
-    ].filter(([, value]) => Boolean(value && String(value).trim()));
+    ];
   } else {
     detailRows = [
       ["เลขที่แจ้ง", payload.ticketNumber],
@@ -376,8 +376,10 @@ export function renderWorkflowEmail(
       ["ระดับความเร่งด่วน", payload.urgencyLabel],
       ["ผู้ดำเนินการ", payload.actionByName],
       ["รายละเอียดเพิ่มเติม", payload.note],
-    ].filter(([, value]) => Boolean(value && String(value).trim()));
+    ];
   }
+
+  detailRows = detailRows.filter(([, value]) => Boolean(value && String(value).trim()));
 
   const intro = config.intro(payload);
   const htmlRows = detailRows
@@ -487,3 +489,4 @@ function escapeHtml(value: string) {
 function escapeAttribute(value: string) {
   return escapeHtml(value).replace(/`/g, "&#96;");
 }
+
