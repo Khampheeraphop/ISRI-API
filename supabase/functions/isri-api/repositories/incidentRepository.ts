@@ -8,7 +8,7 @@ export class IncidentRepository {
     const { data, error } = await this.db
       .from("incidents")
       .select(
-        "id, ticket_number, location_id, location_label, asset_name, category, other_category, urgency_reported, description, status, rejection_reason, rejected_at, created_at, updated_at",
+        "id, ticket_number, location_id, location_label, asset_name, category, other_category, urgency_reported, urgency_verified, description, status, rejection_reason, rejected_at, created_at, updated_at",
       )
       .eq("reporter_id", reporterId)
       .order("created_at", { ascending: false });
@@ -59,7 +59,7 @@ export class IncidentRepository {
         .select("id");
       if (filesError) throw filesError;
       const { error: linksError } = await this.db.from("incident_files").insert(
-        (fileRows ?? []).map((file) => ({
+        (fileRows ?? []).map((file: { id: string }) => ({
           incident_id: data.id,
           file_id: file.id,
         })),
@@ -73,7 +73,7 @@ export class IncidentRepository {
     const { data: incident, error: incidentError } = await this.db
       .from("incidents")
       .select(
-        "id, ticket_number, location_id, location_label, asset_name, category, other_category, urgency_reported, description, status, rejection_reason, rejected_at, created_at, updated_at",
+        "id, ticket_number, location_id, location_label, asset_name, category, other_category, urgency_reported, urgency_verified, description, status, rejection_reason, rejected_at, created_at, updated_at",
       )
       .eq("id", id)
       .eq("reporter_id", reporterId)

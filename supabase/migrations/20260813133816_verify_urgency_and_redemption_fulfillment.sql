@@ -125,7 +125,7 @@ begin
     user_id, amount, transaction_type, reason, ref_incident_id, created_at
   ) values (
     new.reporter_id, v_points, 'earn'::public.point_transaction_type,
-    'ได้รับแต้มหลังผู้จัดสรรยืนยันระดับความเร่งด่วนและปิดงานแล้ว',
+    'ได้รับแต้มจากการแจ้งซ่อมสำเร็จ',
     new.id, v_awarded_at
   );
 
