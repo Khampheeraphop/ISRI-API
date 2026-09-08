@@ -38,6 +38,7 @@ export class PmReminderService {
         profiles!pm_schedules_assigned_technician_id_fkey(full_name, email)
       `,
       )
+      .eq("status", "active")
       .lte("next_due_at", cutoffDate.toISOString())
       .gt("next_due_at", new Date().toISOString())
       .not("assigned_technician_id", "is", null);
@@ -108,6 +109,7 @@ export class PmReminderService {
         profiles!pm_schedules_assigned_technician_id_fkey(full_name, email)
       `,
       )
+      .eq("status", "active")
       .lt("next_due_at", new Date().toISOString())
       .not("assigned_technician_id", "is", null);
 

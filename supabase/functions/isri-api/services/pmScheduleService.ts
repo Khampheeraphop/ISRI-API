@@ -12,6 +12,8 @@ export type PmScheduleInput = {
   intervalMonths: number;
   lastDoneAt: string | null;
   nextDueAt?: string;
+  endAt: string | null;
+  status: "draft" | "active" | "paused" | "completed" | "cancelled";
   assignedTechnicianId?: string | null;
 };
 
@@ -53,6 +55,10 @@ export function parsePmScheduleInput(
   const dueDate =
     typeof body?.nextDueAt === "string" ? new Date(body.nextDueAt) : null;
   const rawTechnicianId = body?.assignedTechnicianId;
+  const endDate = typeof body?.endAt === "string" && body.endAt
+    ? new Date(body.endAt)
+    : null;
+  const status = typeof body?.status === "string" ? body.status : "active";
   const assignedTechnicianId =
     typeof rawTechnicianId === "string" && rawTechnicianId.trim()
       ? rawTechnicianId.trim()
@@ -93,6 +99,15 @@ export function parsePmScheduleInput(
   if (assignedTechnicianId && !/^[0-9a-f-]{36}$/i.test(assignedTechnicianId)) {
     throw new HttpError("PM assigned technician is invalid.");
   }
+  if (endDate && (Number.isNaN(endDate.getTime()) || (dueDate && endDate < dueDate))) {
+    throw new HttpError("PM end date must be on or after the next due date.");
+  }
+  if (!["draft", "active", "paused", "completed", "cancelled"].includes(status)) {
+    throw new HttpError("PM status is invalid.");
+  }
+  if (status === "active" && !endDate) {
+    throw new HttpError("An active PM plan must have an end date.");
+  }
 
   return {
     locationId,
@@ -101,6 +116,8 @@ export function parsePmScheduleInput(
     intervalMonths,
     lastDoneAt: completedDate?.toISOString() ?? null,
     nextDueAt: dueDate?.toISOString(),
+    endAt: endDate?.toISOString() ?? null,
+    status: status as PmScheduleInput["status"],
     assignedTechnicianId,
   };
 }
@@ -119,21 +136,43 @@ export class PmScheduleService {
       await this.ensureTechnicianValid(input.assignedTechnicianId);
     }
     const created = await this.save(input);
-    if (created && input.assignedTechnicianId) {
-      await this.sendCalendarInvite(created, "pm_schedule_assigned");
+    if (created && input.assignedTechnicianId && input.status === "active") {
+      await this.sendCalendarInvite(created, "pm_schedule_assigned", "REQUEST");
     }
     return created;
   }
 
   async update(id: string, input: PmScheduleInput) {
+    const existing = await this.schedules.findSchedule(id);
+    if (!existing) throw new HttpError("PM schedule was not found.", 404);
     await this.ensureScheduleIsUnique(input, id);
     if (input.assignedTechnicianId) {
       await this.ensureTechnicianValid(input.assignedTechnicianId);
     }
-    const values = await this.buildValues(input);
+    const nextSequence = Number(existing.calendar_sequence ?? 0) + 1;
+    const values = await this.buildValues(input, nextSequence);
     const updated = await this.schedules.update(id, values);
-    if (updated && updated.assigned_technician_id) {
-      await this.sendCalendarInvite(updated, "pm_schedule_updated");
+    if (!updated) return updated;
+
+    const wasActive = existing.status === "active";
+    const isActive = updated.status === "active";
+    const oldTechnicianId = existing.assigned_technician_id as string | null;
+    const newTechnicianId = updated.assigned_technician_id as string | null;
+    if (oldTechnicianId && wasActive && (!isActive || oldTechnicianId !== newTechnicianId)) {
+      await this.sendCalendarInvite(
+        { ...existing, calendar_sequence: nextSequence },
+        "pm_schedule_cancelled",
+        "CANCEL",
+      );
+    }
+    if (newTechnicianId && isActive) {
+      await this.sendCalendarInvite(
+        updated,
+        oldTechnicianId === newTechnicianId && wasActive
+          ? "pm_schedule_updated"
+          : "pm_schedule_assigned",
+        "REQUEST",
+      );
     }
     return updated;
   }
@@ -165,6 +204,13 @@ export class PmScheduleService {
     const updatedSchedule = await this.schedules.findSchedule(scheduleId);
     if (!updatedSchedule) {
       throw new HttpError("PM schedule was not found after completion.", 404);
+    }
+    if (schedule.status === "active" && updatedSchedule.status === "completed") {
+      await this.sendCalendarInvite(
+        updatedSchedule,
+        "pm_schedule_cancelled",
+        "CANCEL",
+      );
     }
     return { schedule: updatedSchedule, log };
   }
@@ -207,7 +253,8 @@ export class PmScheduleService {
 
   private async sendCalendarInvite(
     schedule: Record<string, unknown>,
-    eventKey: "pm_schedule_assigned" | "pm_schedule_updated",
+    eventKey: "pm_schedule_assigned" | "pm_schedule_updated" | "pm_schedule_cancelled",
+    method: "REQUEST" | "CANCEL",
   ) {
     if (!this.profiles || !this.workflowEmails) return;
     const technicianId =
@@ -222,7 +269,8 @@ export class PmScheduleService {
 
       const emailConfig = this.workflowEmails.readConfiguration();
       const appUrl = emailConfig?.appUrl || "http://localhost:5173";
-      const fromEmail = emailConfig?.from || "noreply@isri.local";
+      const configuredFrom = emailConfig?.from || "noreply@isri.local";
+      const fromEmail = configuredFrom.match(/<([^>]+)>/)?.[1] ?? configuredFrom;
 
       const calendar = generatePmCalendarInvite({
         scheduleId: String(schedule.id),
@@ -231,10 +279,13 @@ export class PmScheduleService {
         planDetails: String(schedule.plan_details),
         intervalMonths: Number(schedule.interval_months),
         nextDueAt: String(schedule.next_due_at),
+        endAt: typeof schedule.end_at === "string" ? schedule.end_at : null,
         appUrl,
         technicianName: technician.full_name,
         technicianEmail: technician.email,
         organizerEmail: fromEmail,
+        sequence: Number(schedule.calendar_sequence ?? 0),
+        method,
       });
 
       await this.workflowEmails.enqueueMany([
@@ -251,13 +302,13 @@ export class PmScheduleService {
             nextDueAt: String(schedule.next_due_at),
             note: String(schedule.plan_details),
             actionUrl: `${appUrl}/pm/${schedule.id}/complete`,
-            googleCalendarUrl: calendar.googleCalendarUrl,
+            googleCalendarUrl: calendar.googleCalendarUrl || null,
           },
           attachments: [
             {
               filename: "pm-schedule.ics",
               content: calendar.base64Ics,
-              content_type: "text/calendar; method=REQUEST; charset=UTF-8",
+              content_type: `text/calendar; method=${method}; charset=UTF-8`,
             },
           ],
         },
@@ -269,7 +320,7 @@ export class PmScheduleService {
     }
   }
 
-  private async buildValues(input: PmScheduleInput) {
+  private async buildValues(input: PmScheduleInput, calendarSequence = 0) {
     const location = await this.locations.findById(input.locationId);
     if (!location) throw new HttpError("PM location was not found.", 404);
     return {
@@ -281,6 +332,9 @@ export class PmScheduleService {
           new Date(input.lastDoneAt!),
           input.intervalMonths,
         ).toISOString(),
+      endAt: input.endAt,
+      status: input.status,
+      calendarSequence,
     };
   }
 }

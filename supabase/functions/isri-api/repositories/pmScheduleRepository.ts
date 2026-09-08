@@ -1,7 +1,7 @@
 import type { DatabaseClient } from "../_shared/types.ts";
 
 const scheduleColumns =
-  "id, location_id, location_label, asset_name, plan_details, interval_months, last_done_at, next_due_at, assigned_technician_id, created_at, updated_at, profiles!pm_schedules_assigned_technician_id_fkey(full_name, email)";
+  "id, location_id, location_label, asset_name, plan_details, interval_months, last_done_at, next_due_at, end_at, status, calendar_sequence, assigned_technician_id, created_at, updated_at, profiles!pm_schedules_assigned_technician_id_fkey(full_name, email)";
 const logColumns =
   "id, schedule_id, completed_at, technician_id, notes, created_at, profiles!pm_logs_technician_id_fkey(full_name)";
 
@@ -54,6 +54,9 @@ export class PmScheduleRepository {
     intervalMonths: number;
     lastDoneAt: string | null;
     nextDueAt: string;
+    endAt: string | null;
+    status: string;
+    calendarSequence: number;
     assignedTechnicianId?: string | null;
   }) {
     const { data, error } = await this.db
@@ -66,6 +69,9 @@ export class PmScheduleRepository {
         interval_months: input.intervalMonths,
         last_done_at: input.lastDoneAt,
         next_due_at: input.nextDueAt,
+        end_at: input.endAt,
+        status: input.status,
+        calendar_sequence: input.calendarSequence,
         assigned_technician_id: input.assignedTechnicianId ?? null,
       })
       .select(scheduleColumns)
@@ -84,6 +90,9 @@ export class PmScheduleRepository {
       intervalMonths: number;
       lastDoneAt: string | null;
       nextDueAt: string;
+      endAt: string | null;
+      status: string;
+      calendarSequence: number;
       assignedTechnicianId?: string | null;
     },
   ) {
@@ -96,6 +105,9 @@ export class PmScheduleRepository {
         plan_details: input.planDetails,
         interval_months: input.intervalMonths,
         next_due_at: input.nextDueAt,
+        end_at: input.endAt,
+        status: input.status,
+        calendar_sequence: input.calendarSequence,
         assigned_technician_id: input.assignedTechnicianId ?? null,
         updated_at: new Date().toISOString(),
       })

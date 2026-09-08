@@ -13,6 +13,7 @@ export type EmailEventKey =
   | "repair_completed"
   | "pm_schedule_assigned"
   | "pm_schedule_updated"
+  | "pm_schedule_cancelled"
   | "reward_redemption_submitted"
   | "reward_redemption_approved"
   | "reward_redemption_fulfilled"
@@ -175,6 +176,14 @@ const configByEvent: Record<EmailEventKey, TemplateConfig> = {
       `แผนบำรุงรักษาเชิงป้องกัน (PM) สำหรับ ${p.assetName || "ครุภัณฑ์"} มีการปรับปรุงข้อมูลรอบตรวจเช็ค`,
     cta: "เปิดดูและบันทึกผล PM",
   },
+  pm_schedule_cancelled: {
+    badge: "ยกเลิกนัดหมาย PM",
+    badgeColor: "#ba3d3d",
+    title: "ยกเลิกรอบตรวจเช็ค PM",
+    intro: (p) =>
+      `นัดหมาย PM สำหรับ ${p.assetName || "ครุภัณฑ์"} ถูกยกเลิกหรือโอนไปยังผู้รับผิดชอบรายอื่น`,
+    cta: "เปิดดูแผน PM",
+  },
   reward_redemption_submitted: {
     badge: "ขอแลกรางวัล",
     badgeColor: "#5b3ea4",
@@ -281,6 +290,7 @@ export function renderWorkflowEmail(
   const isPm =
     eventKey === "pm_schedule_assigned" ||
     eventKey === "pm_schedule_updated" ||
+    eventKey === "pm_schedule_cancelled" ||
     eventKey === "pm_due_soon" ||
     eventKey === "pm_overdue" ||
     eventKey === "pm_completion_log";

@@ -5,11 +5,13 @@ export interface PmCalendarInput {
   planDetails: string;
   intervalMonths: number;
   nextDueAt: string;
+  endAt: string | null;
   appUrl: string;
   technicianName: string;
   technicianEmail: string;
   organizerEmail: string;
   sequence?: number;
+  method?: "REQUEST" | "CANCEL";
 }
 
 export interface GeneratedPmCalendar {
@@ -75,23 +77,27 @@ export function generatePmCalendarInvite(
   const cleanTechnicianEmail = input.technicianEmail.trim();
   const cleanOrganizerEmail = input.organizerEmail.trim() || "noreply@isri.local";
   const sequence = input.sequence ?? 0;
+  const method = input.method ?? "REQUEST";
+  const recurrenceUntil = input.endAt
+    ? `;UNTIL=${formatIcsDateTime(new Date(input.endAt))}`
+    : "";
 
   const icsLines = [
     "BEGIN:VCALENDAR",
     "VERSION:2.0",
     "PRODID:-//ISRI//Preventive Maintenance Calendar//TH",
     "CALSCALE:GREGORIAN",
-    "METHOD:REQUEST",
+    `METHOD:${method}`,
     "BEGIN:VEVENT",
     `UID:pm-${input.scheduleId}@isri.local`,
     `DTSTAMP:${dtstamp}`,
     `DTSTART:${dtstart}`,
     `DTEND:${dtend}`,
-    `RRULE:FREQ=MONTHLY;INTERVAL=${Math.max(1, input.intervalMonths)}`,
+    `RRULE:FREQ=MONTHLY;INTERVAL=${Math.max(1, input.intervalMonths)}${recurrenceUntil}`,
     `SUMMARY:${escapeIcsText(summary)}`,
     `DESCRIPTION:${escapeIcsText(descriptionText)}`,
     `LOCATION:${escapeIcsText(input.locationLabel)}`,
-    "STATUS:CONFIRMED",
+    `STATUS:${method === "CANCEL" ? "CANCELLED" : "CONFIRMED"}`,
     `SEQUENCE:${sequence}`,
     `ORGANIZER;CN=ISRI System:mailto:${cleanOrganizerEmail}`,
     `ATTENDEE;CUTYPE=INDIVIDUAL;ROLE=REQ-PARTICIPANT;PARTSTAT=NEEDS-ACTION;RSVP=TRUE;CN=${escapeIcsText(cleanTechnicianName)}:mailto:${cleanTechnicianEmail}`,
@@ -114,9 +120,11 @@ export function generatePmCalendarInvite(
     dates: `${dtstart}/${dtend}`,
     details: descriptionText,
     location: input.locationLabel,
-    recur: `RRULE:FREQ=MONTHLY;INTERVAL=${Math.max(1, input.intervalMonths)}`,
+    recur: `RRULE:FREQ=MONTHLY;INTERVAL=${Math.max(1, input.intervalMonths)}${recurrenceUntil}`,
   });
-  const googleCalendarUrl = `https://calendar.google.com/calendar/render?${gcalParams.toString()}`;
+  const googleCalendarUrl = method === "REQUEST"
+    ? `https://calendar.google.com/calendar/render?${gcalParams.toString()}`
+    : "";
 
   return {
     icsContent,

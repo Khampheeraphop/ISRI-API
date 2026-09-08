@@ -19,6 +19,8 @@ const validInput = {
   intervalMonths: 3,
   lastDoneAt: "2026-08-01T02:00:00.000Z",
   assignedTechnicianId: "22222222-2222-4222-8222-222222222222",
+  endAt: "2028-08-01T16:59:59.000Z",
+  status: "active",
 };
 
 Deno.test("parsePmScheduleInput returns validated PM plan data", () => {
@@ -28,6 +30,7 @@ Deno.test("parsePmScheduleInput returns validated PM plan data", () => {
   assertEquals(result.planDetails, validInput.planDetails);
   assertEquals(result.intervalMonths, 3);
   assertEquals(result.assignedTechnicianId, validInput.assignedTechnicianId);
+  assertEquals(result.status, "active");
 });
 
 Deno.test(
@@ -75,6 +78,7 @@ Deno.test(
       planDetails: "ล้างแผงคอยล์เย็น ตรวจเช็คน้ำยาแอร์",
       intervalMonths: 1,
       nextDueAt: "2026-10-01T00:00:00.000Z",
+      endAt: "2027-10-01T16:59:59.000Z",
       appUrl: "https://isri.example",
       technicianName: "สมชาย พรหมรักษา",
       technicianEmail: "somchai.electric@isri.local",
@@ -84,6 +88,7 @@ Deno.test(
     assertStringIncludes(calendar.icsContent, "BEGIN:VCALENDAR");
     assertStringIncludes(calendar.icsContent, "METHOD:REQUEST");
     assertStringIncludes(calendar.icsContent, "RRULE:FREQ=MONTHLY;INTERVAL=1");
+    assertStringIncludes(calendar.icsContent, "UNTIL=20271001T165959Z");
     assertStringIncludes(
       calendar.icsContent,
       "SUMMARY:[ISRI-PM] เครื่องปรับอากาศ Daikin · อาคารอำนวยการ · ชั้น 2",
@@ -100,6 +105,28 @@ Deno.test(
     );
   },
 );
+
+Deno.test("generatePmCalendarInvite creates a revision cancellation", () => {
+  const calendar = generatePmCalendarInvite({
+    scheduleId: "80000000-0000-0000-0000-000000000001",
+    assetName: "เครื่องปรับอากาศ Daikin",
+    locationLabel: "อาคารอำนวยการ · ชั้น 2",
+    planDetails: "ล้างแผงคอยล์เย็น ตรวจเช็คน้ำยาแอร์",
+    intervalMonths: 1,
+    nextDueAt: "2026-10-01T00:00:00.000Z",
+    endAt: "2027-10-01T16:59:59.000Z",
+    appUrl: "https://isri.example",
+    technicianName: "สมชาย พรหมรักษา",
+    technicianEmail: "somchai.electric@isri.local",
+    organizerEmail: "noreply@isri.example",
+    sequence: 3,
+    method: "CANCEL",
+  });
+  assertStringIncludes(calendar.icsContent, "METHOD:CANCEL");
+  assertStringIncludes(calendar.icsContent, "STATUS:CANCELLED");
+  assertStringIncludes(calendar.icsContent, "SEQUENCE:3");
+  assertEquals(calendar.googleCalendarUrl, "");
+});
 
 Deno.test(
   "renderWorkflowEmail formats PM schedule assignment with Google Calendar link",

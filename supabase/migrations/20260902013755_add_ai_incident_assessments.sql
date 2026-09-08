@@ -40,8 +40,8 @@ create index ai_incident_assessments_requested_by_idx
 alter table public.ai_incident_assessments enable row level security;
 revoke all on table public.ai_incident_assessments from anon, authenticated;
 
--- The browser must go through isri-ai-assessment, where dispatcher
--- authorization is checked. Keeping browser roles ungranted also avoids accidental Data API
+-- The browser must go through isri-api, where dispatcher authorization is
+-- checked. Keeping browser roles ungranted also avoids accidental Data API
 -- exposure when platform defaults change.
 create policy api_only_ai_incident_assessments
   on public.ai_incident_assessments
@@ -54,3 +54,4 @@ grant select, insert, update, delete
   on table public.ai_incident_assessments
   to service_role;
 
+;
