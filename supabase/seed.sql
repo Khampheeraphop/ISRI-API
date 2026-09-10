@@ -133,10 +133,41 @@ values
   ('50000000-0000-0000-0000-000000000004', 'ถุงผ้าพับได้', 'ถุงผ้าสำหรับลดการใช้ถุงพลาสติกภายในหน่วยงาน', 20, 30, true, 'standard'),
   ('50000000-0000-0000-0000-000000000005', 'ประกาศนียบัตรบุคลากรต้นแบบด้านความปลอดภัย', 'รางวัลประจำปีสำหรับผู้มีส่วนร่วมสูงสุดตามเกณฑ์โครงการ', 100, 3, true, 'annual');
 
-insert into public.reward_campaigns (id, name, period_type, start_date, end_date, prize_description, status)
-values
-  ('60000000-0000-0000-0000-000000000001', 'บุคลากรมีส่วนร่วมด้านความปลอดภัยประจำเดือน', 'monthly', date_trunc('month', current_date)::date, (date_trunc('month', current_date) + interval '1 month - 1 day')::date, 'ผู้มีคะแนนสะสมสูงสุดประจำเดือนได้รับเกียรติบัตรและของรางวัลตามระเบียบโครงการ', 'active'),
-  ('60000000-0000-0000-0000-000000000002', 'บุคลากรมีส่วนร่วมด้านความปลอดภัยเดือนที่ผ่านมา', 'monthly', (date_trunc('month', current_date) - interval '1 month')::date, (date_trunc('month', current_date) - interval '1 day')::date, 'สรุปผลการมีส่วนร่วมของบุคลากรประจำเดือน', 'ended');
+insert into public.reward_campaigns (
+  id, name, period_type, start_date, end_date, prize_description, status,
+  reward_item_id, winner_count, reserved_reward_count
+) values (
+  '60000000-0000-0000-0000-000000000001',
+  'บุคลากรมีส่วนร่วมด้านความปลอดภัยประจำเดือน',
+  'monthly',
+  current_date,
+  (date_trunc('month', current_date) + interval '1 month - 1 day')::date,
+  'ประกาศนียบัตรบุคลากรต้นแบบด้านความปลอดภัย',
+  'active',
+  '50000000-0000-0000-0000-000000000005',
+  1,
+  1
+);
+
+update public.reward_items
+set stock = stock - 1
+where id = '50000000-0000-0000-0000-000000000005';
+
+insert into public.reward_campaigns (
+  id, name, period_type, start_date, end_date, prize_description, status,
+  reward_item_id, winner_count, reserved_reward_count
+) values (
+  '60000000-0000-0000-0000-000000000002',
+  'บุคลากรมีส่วนร่วมด้านความปลอดภัยเดือนที่ผ่านมา',
+  'monthly',
+  (date_trunc('month', current_date) - interval '1 month')::date,
+  (date_trunc('month', current_date) - interval '1 day')::date,
+  'ประกาศนียบัตรบุคลากรต้นแบบด้านความปลอดภัย',
+  'ended',
+  '50000000-0000-0000-0000-000000000005',
+  1,
+  0
+);
 
 -- ---------------------------------------------------------------------------
 -- 5. Incidents and complete work-order workflow coverage

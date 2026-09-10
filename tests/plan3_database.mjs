@@ -80,6 +80,24 @@ await db.exec(
 await db.exec(
   await readFile(new URL("artifacts/plan3-workflows.sql", root), "utf8"),
 );
+await db.exec(
+  await readFile(
+    new URL(
+      "api/supabase/migrations/20260910090000_link_campaign_rewards_and_prevent_overlap.sql",
+      root,
+    ),
+    "utf8",
+  ),
+);
+await db.exec(
+  await readFile(
+    new URL(
+      "api/supabase/migrations/20260910100000_serialize_campaign_schedule_writes.sql",
+      root,
+    ),
+    "utf8",
+  ),
+);
 const results = [];
 async function check(name, fn) {
   await db.exec("begin; set local role service_role;");
@@ -439,12 +457,77 @@ await check(
   },
 );
 await check("campaign expiry respects Thai end date without resetting permanent points", async () => {
+  await db.exec("reset role; alter table public.reward_campaigns disable trigger reward_campaigns_validate_schedule");
   const campaign = (await one(`insert into public.reward_campaigns(name,period_type,start_date,end_date,prize_description,status)
     values('Local expired campaign','custom',(now() at time zone 'Asia/Bangkok')::date-2,(now() at time zone 'Asia/Bangkok')::date-1,'Local prize','active') returning id`)).id;
+  await db.exec("alter table public.reward_campaigns enable trigger reward_campaigns_validate_schedule; set local role service_role");
   const before = await one('select balance from public.point_wallets where user_id=$1', [ids.reporter]);
   await db.query('select public.finalize_expired_campaigns()');
   assert.equal((await one('select status from public.reward_campaigns where id=$1', [campaign])).status, 'ended');
   assert.deepEqual(await one('select balance from public.point_wallets where user_id=$1', [ids.reporter]), before);
+});
+await check("campaign creation rejects past and overlapping schedules and reserves stock", async () => {
+  const reward = (await one(`insert into public.reward_items(name,description,point_cost,stock,is_active,reward_period)
+    values('Campaign reward','Fixture',1,3,false,'standard') returning id`)).id;
+  const campaign = (await one(`select (public.create_reward_campaign(
+    'Future campaign','custom',(current_date+10),(current_date+15),$1,2)).id`, [reward])).id;
+  assert.equal((await one('select stock from public.reward_items where id=$1', [reward])).stock, 1);
+  assert.deepEqual(
+    await one('select winner_count,reserved_reward_count from public.reward_campaigns where id=$1', [campaign]),
+    { winner_count: 2, reserved_reward_count: 2 },
+  );
+  await rejected(
+    `select public.create_reward_campaign('Overlap','custom',current_date+12,current_date+20,$1,1)`,
+    [reward],
+    /ช่วงเวลานี้ทับซ้อน/,
+  );
+  await rejected(
+    `select public.create_reward_campaign('Past','custom',current_date-2,current_date-1,$1,1)`,
+    [reward],
+    /ย้อนหลัง/,
+  );
+});
+await check("campaign finalization creates winners and keeps reward stock consistent", async () => {
+  const reward = (await one(`insert into public.reward_items(name,description,point_cost,stock,is_active,reward_period)
+    values('Winner reward','Fixture',1,3,false,'standard') returning id`)).id;
+  const campaign = (await one(`select (public.create_reward_campaign(
+    'Winner campaign','custom',current_date,current_date+2,$1,2)).id`, [reward])).id;
+  await db.query(
+    `insert into public.campaign_scores(campaign_id,user_id,points,last_scored_at)
+     values($1,$2,30,now()-interval '1 minute'),($1,$3,20,now())`,
+    [campaign, ids.reporter, ids.admin],
+  );
+  await db.query('select public.finalize_reward_campaign($1)', [campaign]);
+  const awards = (await db.query(
+    `select id,user_id,rank,status from public.campaign_awards where campaign_id=$1 order by rank`,
+    [campaign],
+  )).rows;
+  assert.equal(awards.length, 2);
+  assert.equal(awards[0].user_id, ids.reporter);
+  assert.equal((await one('select stock from public.reward_items where id=$1', [reward])).stock, 1);
+  await db.query(`select public.update_campaign_award_status($1,'fulfilled',null)`, [awards[0].id]);
+  await db.query(`select public.update_campaign_award_status($1,'cancelled','ผู้รับสละสิทธิ์')`, [awards[1].id]);
+  assert.equal((await one('select stock from public.reward_items where id=$1', [reward])).stock, 2);
+  assert.equal(
+    (await one('select reserved_reward_count from public.reward_campaigns where id=$1', [campaign])).reserved_reward_count,
+    0,
+  );
+});
+await check("campaign finalization releases rewards when participants are fewer than winners", async () => {
+  const reward = (await one(`insert into public.reward_items(name,description,point_cost,stock,is_active,reward_period)
+    values('Partially used reward','Fixture',1,4,false,'standard') returning id`)).id;
+  const campaign = (await one(`select (public.create_reward_campaign(
+    'Small campaign','custom',current_date,current_date+2,$1,3)).id`, [reward])).id;
+  await db.query(
+    `insert into public.campaign_scores(campaign_id,user_id,points,last_scored_at) values($1,$2,10,now())`,
+    [campaign, ids.reporter],
+  );
+  await db.query('select public.finalize_reward_campaign($1)', [campaign]);
+  assert.equal((await one('select stock from public.reward_items where id=$1', [reward])).stock, 3);
+  assert.equal(
+    (await one('select reserved_reward_count from public.reward_campaigns where id=$1', [campaign])).reserved_reward_count,
+    1,
+  );
 });
 await writeFile(
   new URL("artifacts/plan3-database-test-results.json", root),

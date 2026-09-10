@@ -192,20 +192,14 @@ function rewardInput(body: Record<string, unknown> | null) {
 
 function campaignInput(body: Record<string, unknown> | null): CampaignInput {
   const name = typeof body?.name === "string" ? body.name.trim() : "";
-  const prizeDescription =
-    typeof body?.prizeDescription === "string"
-      ? body.prizeDescription.trim()
-      : "";
   const periodType = body?.periodType;
   const startDate = typeof body?.startDate === "string" ? body.startDate : "";
   const endDate = typeof body?.endDate === "string" ? body.endDate : "";
+  const rewardItemId =
+    typeof body?.rewardItemId === "string" ? body.rewardItemId : "";
+  const winnerCount = Number(body?.winnerCount);
   const isDate = (value: string) => /^\d{4}-\d{2}-\d{2}$/.test(value);
-  if (
-    name.length < 2 ||
-    name.length > 200 ||
-    prizeDescription.length < 2 ||
-    prizeDescription.length > 2000
-  ) {
+  if (name.length < 2 || name.length > 200) {
     throw new HttpError("Campaign details are invalid.");
   }
   if (
@@ -218,7 +212,13 @@ function campaignInput(body: Record<string, unknown> | null): CampaignInput {
   if (!isDate(startDate) || !isDate(endDate) || endDate < startDate) {
     throw new HttpError("Campaign dates are invalid.");
   }
-  return { name, periodType, startDate, endDate, prizeDescription };
+  if (!/^[0-9a-f-]{36}$/i.test(rewardItemId)) {
+    throw new HttpError("กรุณาเลือกของรางวัลสำหรับแคมเปญ");
+  }
+  if (!Number.isInteger(winnerCount) || winnerCount < 1 || winnerCount > 100) {
+    throw new HttpError("จำนวนผู้ชนะต้องอยู่ระหว่าง 1 ถึง 100 คน");
+  }
+  return { name, periodType, startDate, endDate, rewardItemId, winnerCount };
 }
 
 const categoryByCode: Record<string, string> = {
@@ -280,6 +280,16 @@ Deno.serve(async (req) => {
               String(file.object_path),
             )
           : null,
+      };
+    };
+
+    const withCampaignRewardImage = async (
+      campaign: Record<string, unknown>,
+    ) => {
+      const reward = campaign.reward_item as Record<string, unknown> | null;
+      return {
+        ...campaign,
+        reward_item: reward ? await withRewardImage(reward) : null,
       };
     };
 
@@ -749,12 +759,20 @@ Deno.serve(async (req) => {
 
     if (req.method === "GET" && pathname === "/campaigns") {
       requireAdmin(profile);
-      return json({ data: await campaigns.list() });
+      return json({
+        data: await Promise.all(
+          (await campaigns.list()).map(withCampaignRewardImage),
+        ),
+      });
     }
     if (req.method === "POST" && pathname === "/admin/campaigns") {
       requireAdmin(profile);
       return json(
-        { data: await campaigns.create(campaignInput(await parseJson(req))) },
+        {
+          data: await withCampaignRewardImage(
+            await campaigns.create(campaignInput(await parseJson(req))),
+          ),
+        },
         201,
       );
     }
@@ -771,7 +789,7 @@ Deno.serve(async (req) => {
       );
       return json({
         data: {
-          campaign,
+          campaign: await withCampaignRewardImage(campaign),
           scores: scores.map((score) => ({
             ...score,
             full_name: names.get(score.user_id) ?? "ผู้ใช้งานระบบ",
@@ -794,7 +812,7 @@ Deno.serve(async (req) => {
           409,
         );
       }
-      return json({ data: campaign });
+      return json({ data: await withCampaignRewardImage(campaign) });
     }
     if (req.method === "PATCH" && campaignMatch) {
       requireAdmin(profile);
@@ -805,7 +823,30 @@ Deno.serve(async (req) => {
       if (!campaign) {
         throw new HttpError("Only an active campaign can be edited.", 409);
       }
-      return json({ data: campaign });
+      return json({ data: await withCampaignRewardImage(campaign) });
+    }
+    const campaignAwardMatch = pathname.match(
+      /^\/admin\/campaign-awards\/([0-9a-f-]{36})\/status$/i,
+    );
+    if (req.method === "PATCH" && campaignAwardMatch) {
+      requireAdmin(profile);
+      const body = await parseJson(req);
+      const status = body?.status;
+      const note =
+        typeof body?.note === "string" ? body.note.trim() || null : null;
+      if (status !== "fulfilled" && status !== "cancelled") {
+        throw new HttpError("สถานะการส่งมอบรางวัลไม่ถูกต้อง");
+      }
+      if (note && note.length > 500) {
+        throw new HttpError("หมายเหตุยาวเกิน 500 ตัวอักษร");
+      }
+      return json({
+        data: await campaigns.updateAwardStatus({
+          awardId: campaignAwardMatch[1],
+          status,
+          note,
+        }),
+      });
     }
 
     if (req.method === "GET" && pathname === "/notifications") {
