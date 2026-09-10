@@ -1,201 +1,62 @@
-// @ts-ignore - Deno types not available in this environment
+// @ts-ignore - Supabase Edge runtime provides this module.
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-// @ts-ignore - Supabase types not available in this environment
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2.38.4";
-
-// @ts-ignore
-const Deno = globalThis.Deno || {
-  env: {
-    get: (key: string) => (globalThis as any)[key] || null,
-  },
-};
+import { createClient } from "npm:@supabase/supabase-js@2";
+import { EmailOutboxRepository } from "../isri-api/repositories/emailOutboxRepository.ts";
+import { PmReminderService } from "../isri-api/services/pmReminderService.ts";
+import { WorkflowEmailService } from "../isri-api/services/workflowEmailService.ts";
 
 serve(async (req: Request) => {
   try {
-    // Verify this is a cron job request (from Supabase cron or internal scheduler)
-    const authHeader = req.headers.get("authorization");
-    const cronSecret = Deno.env.get("CRON_SECRET");
-
-    if (!cronSecret) {
-      return new Response("CRON_SECRET not configured", { status: 500 });
+    const authorization = req.headers.get("authorization");
+    const token = authorization?.startsWith("Bearer ")
+      ? authorization.slice("Bearer ".length)
+      : "";
+    let callerRole = "";
+    try {
+      const payload = token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/");
+      const padded = payload.padEnd(Math.ceil(payload.length / 4) * 4, "=");
+      callerRole = JSON.parse(atob(padded)).role ?? "";
+    } catch {
+      callerRole = "";
     }
-
-    if (authHeader !== `Bearer ${cronSecret}`) {
+    // The Edge gateway verifies the JWT before the handler runs. Only the
+    // server-side service role may run this privileged scheduled task.
+    if (callerRole !== "service_role") {
       return new Response("Unauthorized", { status: 401 });
     }
 
-    // Initialize Supabase client
-    const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
-    const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-    const supabase = createClient(supabaseUrl, supabaseServiceKey);
-
-    // Import the reminder service logic
-    // For simplicity, we'll implement the logic directly here
-    // In production, this would be a shared module
-
-    // Check PM due soon (7 days ahead)
-    const cutoffDate = new Date();
-    cutoffDate.setDate(cutoffDate.getDate() + 7);
-
-    const { data: dueSoonSchedules } = await supabase
-      .from("pm_schedules")
-      .select(
-        `
-        id,
-        asset_name,
-        location_label,
-        next_due_at,
-        assigned_technician_id,
-        profiles!pm_schedules_assigned_technician_id_fkey(full_name, email)
-      `,
-      )
-      .eq("status", "active")
-      .lte("next_due_at", cutoffDate.toISOString())
-      .gt("next_due_at", new Date().toISOString())
-      .not("assigned_technician_id", "is", null);
-
-    let emailsEnqueued = 0;
-
-    if (dueSoonSchedules && dueSoonSchedules.length > 0) {
-      const { data: admins } = await supabase
-        .from("profiles")
-        .select("id, full_name, email")
-        .eq("role", "admin")
-        .eq("approval_status", "approved");
-
-      for (const schedule of dueSoonSchedules) {
-        const technician = schedule.profiles;
-        if (!technician) continue;
-
-        const appUrl = Deno.env.get("APP_URL") || "http://localhost:5173";
-
-        // Email to technician
-        await supabase.from("email_outbox").insert({
-          recipient_user_id: schedule.assigned_technician_id,
-          recipient_email: technician.email,
-          event_key: "pm_due_soon",
-          related_pm_schedule_id: schedule.id,
-          payload: {
-            recipientName: technician.full_name,
-            assetName: schedule.asset_name,
-            locationLabel: schedule.location_label,
-            nextDueAt: schedule.next_due_at,
-            actionUrl: `${appUrl}/pm/schedules`,
-          },
-        });
-
-        // Emails to admins
-        if (admins) {
-          for (const admin of admins) {
-            await supabase.from("email_outbox").insert({
-              recipient_user_id: admin.id,
-              recipient_email: admin.email,
-              event_key: "pm_due_soon",
-              related_pm_schedule_id: schedule.id,
-              payload: {
-                recipientName: admin.full_name,
-                assetName: schedule.asset_name,
-                locationLabel: schedule.location_label,
-                nextDueAt: schedule.next_due_at,
-                actionUrl: `${appUrl}/admin/pm-schedules`,
-              },
-            });
-          }
-        }
-
-        emailsEnqueued += 1 + (admins?.length || 0);
-      }
-    }
-
-    // Check PM overdue
-    const { data: overdueSchedules } = await supabase
-      .from("pm_schedules")
-      .select(
-        `
-        id,
-        asset_name,
-        location_label,
-        next_due_at,
-        assigned_technician_id,
-        profiles!pm_schedules_assigned_technician_id_fkey(full_name, email)
-      `,
-      )
-      .eq("status", "active")
-      .lt("next_due_at", new Date().toISOString())
-      .not("assigned_technician_id", "is", null);
-
-    if (overdueSchedules && overdueSchedules.length > 0) {
-      const { data: admins } = await supabase
-        .from("profiles")
-        .select("id, full_name, email")
-        .eq("role", "admin")
-        .eq("approval_status", "approved");
-
-      for (const schedule of overdueSchedules) {
-        const technician = schedule.profiles;
-        if (!technician) continue;
-
-        const appUrl = Deno.env.get("APP_URL") || "http://localhost:5173";
-
-        // Email to technician
-        await supabase.from("email_outbox").insert({
-          recipient_user_id: schedule.assigned_technician_id,
-          recipient_email: technician.email,
-          event_key: "pm_overdue",
-          related_pm_schedule_id: schedule.id,
-          payload: {
-            recipientName: technician.full_name,
-            assetName: schedule.asset_name,
-            locationLabel: schedule.location_label,
-            nextDueAt: schedule.next_due_at,
-            actionUrl: `${appUrl}/pm/schedules`,
-          },
-        });
-
-        // Emails to admins
-        if (admins) {
-          for (const admin of admins) {
-            await supabase.from("email_outbox").insert({
-              recipient_user_id: admin.id,
-              recipient_email: admin.email,
-              event_key: "pm_overdue",
-              related_pm_schedule_id: schedule.id,
-              payload: {
-                recipientName: admin.full_name,
-                assetName: schedule.asset_name,
-                locationLabel: schedule.location_label,
-                nextDueAt: schedule.next_due_at,
-                actionUrl: `${appUrl}/admin/pm-schedules`,
-              },
-            });
-          }
-        }
-
-        emailsEnqueued += 1 + (admins?.length || 0);
-      }
-    }
-
-    return new Response(
-      JSON.stringify({
-        success: true,
-        dueSoonCount: dueSoonSchedules?.length || 0,
-        overdueCount: overdueSchedules?.length || 0,
-        emailsEnqueued,
-      }),
-      {
-        headers: { "Content-Type": "application/json" },
-        status: 200,
-      },
-    );
-  } catch (error) {
-    console.error("PM reminder cron error:", error);
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    return new Response(
-      JSON.stringify({ success: false, error: errorMessage }),
-      {
-        headers: { "Content-Type": "application/json" },
+    const supabaseUrl = Deno.env.get("SUPABASE_URL");
+    const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+    if (!supabaseUrl || !serviceRoleKey) {
+      return new Response("Supabase configuration is incomplete", {
         status: 500,
+      });
+    }
+
+    const db = createClient(supabaseUrl, serviceRoleKey);
+    const outbox = new EmailOutboxRepository(db);
+    const workflowEmails = new WorkflowEmailService(outbox);
+    const reminders = new PmReminderService(outbox, db, workflowEmails);
+    const [dueSoonRecipients, overdueRecipients] = await Promise.all([
+      reminders.checkPmDueSoon(7),
+      reminders.checkPmOverdue(),
+    ]);
+    const retryDelivery = await workflowEmails.deliverPending(25);
+
+    return Response.json({
+      success: true,
+      dueSoonRecipients,
+      overdueRecipients,
+      retryDelivery,
+    });
+  } catch (error) {
+    console.error("PM reminder cron error", error);
+    return Response.json(
+      {
+        success: false,
+        error: error instanceof Error ? error.message : String(error),
       },
+      { status: 500 },
     );
   }
 });

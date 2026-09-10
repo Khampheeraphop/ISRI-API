@@ -31,7 +31,9 @@ export class NotificationRepository {
   async listForUser(userId: string) {
     const { data, error } = await this.db
       .from("notifications")
-      .select("id, type, message, related_incident_id, is_read, created_at")
+      .select(
+        "id, type, message, related_incident_id, related_pm_schedule_id, is_read, created_at",
+      )
       .eq("user_id", userId)
       .order("created_at", { ascending: false })
       .limit(30);

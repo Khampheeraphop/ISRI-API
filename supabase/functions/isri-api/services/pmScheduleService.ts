@@ -4,6 +4,7 @@ import { PmScheduleRepository } from "../repositories/pmScheduleRepository.ts";
 import { ProfileRepository } from "../repositories/profileRepository.ts";
 import { WorkflowEmailService } from "./workflowEmailService.ts";
 import { generatePmCalendarInvite } from "./icalendarGenerator.ts";
+import { PmReminderService } from "./pmReminderService.ts";
 
 export type PmScheduleInput = {
   locationId: string;
@@ -55,9 +56,8 @@ export function parsePmScheduleInput(
   const dueDate =
     typeof body?.nextDueAt === "string" ? new Date(body.nextDueAt) : null;
   const rawTechnicianId = body?.assignedTechnicianId;
-  const endDate = typeof body?.endAt === "string" && body.endAt
-    ? new Date(body.endAt)
-    : null;
+  const endDate =
+    typeof body?.endAt === "string" && body.endAt ? new Date(body.endAt) : null;
   const status = typeof body?.status === "string" ? body.status : "active";
   const assignedTechnicianId =
     typeof rawTechnicianId === "string" && rawTechnicianId.trim()
@@ -99,10 +99,15 @@ export function parsePmScheduleInput(
   if (assignedTechnicianId && !/^[0-9a-f-]{36}$/i.test(assignedTechnicianId)) {
     throw new HttpError("PM assigned technician is invalid.");
   }
-  if (endDate && (Number.isNaN(endDate.getTime()) || (dueDate && endDate < dueDate))) {
+  if (
+    endDate &&
+    (Number.isNaN(endDate.getTime()) || (dueDate && endDate < dueDate))
+  ) {
     throw new HttpError("PM end date must be on or after the next due date.");
   }
-  if (!["draft", "active", "paused", "completed", "cancelled"].includes(status)) {
+  if (
+    !["draft", "active", "paused", "completed", "cancelled"].includes(status)
+  ) {
     throw new HttpError("PM status is invalid.");
   }
   if (status === "active" && !endDate) {
@@ -128,6 +133,7 @@ export class PmScheduleService {
     private readonly locations: LocationRepository,
     private readonly profiles?: ProfileRepository,
     private readonly workflowEmails?: WorkflowEmailService,
+    private readonly reminders?: PmReminderService,
   ) {}
 
   async create(input: PmScheduleInput) {
@@ -158,7 +164,11 @@ export class PmScheduleService {
     const isActive = updated.status === "active";
     const oldTechnicianId = existing.assigned_technician_id as string | null;
     const newTechnicianId = updated.assigned_technician_id as string | null;
-    if (oldTechnicianId && wasActive && (!isActive || oldTechnicianId !== newTechnicianId)) {
+    if (
+      oldTechnicianId &&
+      wasActive &&
+      (!isActive || oldTechnicianId !== newTechnicianId)
+    ) {
       await this.sendCalendarInvite(
         { ...existing, calendar_sequence: nextSequence },
         "pm_schedule_cancelled",
@@ -205,12 +215,26 @@ export class PmScheduleService {
     if (!updatedSchedule) {
       throw new HttpError("PM schedule was not found after completion.", 404);
     }
-    if (schedule.status === "active" && updatedSchedule.status === "completed") {
+    if (
+      schedule.status === "active" &&
+      updatedSchedule.status === "completed"
+    ) {
       await this.sendCalendarInvite(
         updatedSchedule,
         "pm_schedule_cancelled",
         "CANCEL",
       );
+    }
+    try {
+      await this.reminders?.enqueuePmCompletionLog(
+        scheduleId,
+        technicianId,
+        String(updatedSchedule.asset_name),
+        String(updatedSchedule.location_label),
+      );
+    } catch (error) {
+      // The PM log is already committed; an email failure must not hide success.
+      console.error("Failed to enqueue PM completion email", error);
     }
     return { schedule: updatedSchedule, log };
   }
@@ -253,7 +277,10 @@ export class PmScheduleService {
 
   private async sendCalendarInvite(
     schedule: Record<string, unknown>,
-    eventKey: "pm_schedule_assigned" | "pm_schedule_updated" | "pm_schedule_cancelled",
+    eventKey:
+      | "pm_schedule_assigned"
+      | "pm_schedule_updated"
+      | "pm_schedule_cancelled",
     method: "REQUEST" | "CANCEL",
   ) {
     if (!this.profiles || !this.workflowEmails) return;
@@ -270,7 +297,8 @@ export class PmScheduleService {
       const emailConfig = this.workflowEmails.readConfiguration();
       const appUrl = emailConfig?.appUrl || "http://localhost:5173";
       const configuredFrom = emailConfig?.from || "noreply@isri.local";
-      const fromEmail = configuredFrom.match(/<([^>]+)>/)?.[1] ?? configuredFrom;
+      const fromEmail =
+        configuredFrom.match(/<([^>]+)>/)?.[1] ?? configuredFrom;
 
       const calendar = generatePmCalendarInvite({
         scheduleId: String(schedule.id),

@@ -3,6 +3,7 @@ import {
   type QueuedWorkflowEmail,
 } from "../repositories/emailOutboxRepository.ts";
 import type { DatabaseClient } from "../_shared/types.ts";
+import { WorkflowEmailService } from "./workflowEmailService.ts";
 
 // @ts-ignore - Deno types not available in this environment
 const Deno = globalThis.Deno || {
@@ -20,7 +21,18 @@ export class RewardEmailService {
   constructor(
     private readonly outbox: EmailOutboxRepository,
     private readonly db: DatabaseClient,
+    private readonly workflowEmails?: WorkflowEmailService,
   ) {}
+
+  private async enqueueAndDeliver(emails: QueuedWorkflowEmail[]) {
+    try {
+      await this.outbox.enqueueMany(emails);
+      await this.workflowEmails?.deliverPending(25);
+    } catch (error) {
+      // Reward state is already committed. Email delivery must remain best effort.
+      console.error("Failed to enqueue or deliver reward email", error);
+    }
+  }
 
   async enqueueRedemptionSubmitted(
     redemptionId: string,
@@ -57,7 +69,7 @@ export class RewardEmailService {
         rewardName,
         pointCost,
         locationLabel: null, // Reward emails don't need location
-        actionUrl: `${APP_URL}/rewards/wallet`,
+        actionUrl: `${APP_URL}/rewards`,
       },
     });
 
@@ -74,13 +86,13 @@ export class RewardEmailService {
             rewardName,
             pointCost,
             locationLabel: null,
-            actionUrl: `${APP_URL}/admin/reward-redemptions`,
+          actionUrl: `${APP_URL}/rewards/redemptions`,
           },
         });
       }
     }
 
-    await this.outbox.enqueueMany(emails);
+    await this.enqueueAndDeliver(emails);
   }
 
   async enqueueRedemptionApproved(
@@ -98,7 +110,7 @@ export class RewardEmailService {
 
     if (!user) return;
 
-    await this.outbox.enqueueMany([
+    await this.enqueueAndDeliver([
       {
         recipientUserId: userId,
         recipientEmail: user.email,
@@ -110,7 +122,7 @@ export class RewardEmailService {
           pointCost,
           fulfillmentMethod,
           locationLabel: null,
-          actionUrl: `${APP_URL}/rewards/wallet`,
+          actionUrl: `${APP_URL}/rewards`,
         },
       },
     ]);
@@ -130,7 +142,7 @@ export class RewardEmailService {
 
     if (!user) return;
 
-    await this.outbox.enqueueMany([
+    await this.enqueueAndDeliver([
       {
         recipientUserId: userId,
         recipientEmail: user.email,
@@ -141,7 +153,7 @@ export class RewardEmailService {
           rewardName,
           note: adminNote,
           locationLabel: null,
-          actionUrl: `${APP_URL}/rewards/wallet`,
+          actionUrl: `${APP_URL}/rewards`,
         },
       },
     ]);
@@ -162,7 +174,7 @@ export class RewardEmailService {
 
     if (!user) return;
 
-    await this.outbox.enqueueMany([
+    await this.enqueueAndDeliver([
       {
         recipientUserId: userId,
         recipientEmail: user.email,
@@ -174,7 +186,7 @@ export class RewardEmailService {
           pointCost,
           rejectionReason,
           locationLabel: null,
-          actionUrl: `${APP_URL}/rewards/wallet`,
+          actionUrl: `${APP_URL}/rewards`,
         },
       },
     ]);

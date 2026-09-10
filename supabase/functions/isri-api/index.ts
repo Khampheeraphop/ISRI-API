@@ -255,8 +255,12 @@ Deno.serve(async (req) => {
     const notifications = new NotificationRepository(db);
     const emailOutbox = new EmailOutboxRepository(db);
     const workflowEmails = new WorkflowEmailService(emailOutbox);
-    const rewardEmails = new RewardEmailService(emailOutbox, db);
-    const pmReminders = new PmReminderService(emailOutbox, db);
+    const rewardEmails = new RewardEmailService(
+      emailOutbox,
+      db,
+      workflowEmails,
+    );
+    const pmReminders = new PmReminderService(emailOutbox, db, workflowEmails);
     const workOrders = new WorkOrderRepository(db);
     const dashboard = new DashboardRepository(db);
     const sla = new SlaRepository(db);
@@ -266,6 +270,7 @@ Deno.serve(async (req) => {
       locations,
       profiles,
       workflowEmails,
+      pmReminders,
     );
     const rewards = new RewardRepository(db, rewardEmails);
     const campaigns = new CampaignRepository(db);
@@ -855,19 +860,28 @@ Deno.serve(async (req) => {
       return json({
         data: notificationItems.map((notification) => {
           const incidentId = notification.related_incident_id;
+          const pmScheduleId = notification.related_pm_schedule_id;
           const workOrderId =
             "work_order_id" in notification ? notification.work_order_id : null;
-          const targetPath = !incidentId
-            ? null
-            : profile.role === "reporter"
-              ? `/incidents/${incidentId}`
-              : profile.role === "technician" && workOrderId
-                ? `/work-orders/${workOrderId}`
-                : profile.role === "dispatcher" && workOrderId
-                  ? `/dispatch/reviews?workOrderId=${workOrderId}`
-                  : profile.role === "dispatcher"
-                    ? `/dispatch/incidents/${incidentId}`
-                    : null;
+          const targetPath = pmScheduleId
+            ? `/pm/${pmScheduleId}/complete?tab=history`
+            : notification.type === "reward_status"
+              ? profile.role === "admin"
+                ? "/rewards/redemptions"
+                : profile.role === "reporter"
+                  ? "/rewards"
+                  : null
+              : !incidentId
+                ? null
+                : profile.role === "reporter"
+                  ? `/incidents/${incidentId}`
+                  : profile.role === "technician" && workOrderId
+                    ? `/work-orders/${workOrderId}`
+                    : profile.role === "dispatcher" && workOrderId
+                      ? `/dispatch/reviews?workOrderId=${workOrderId}`
+                      : profile.role === "dispatcher"
+                        ? `/dispatch/incidents/${incidentId}`
+                        : null;
           return { ...notification, target_path: targetPath };
         }),
       });

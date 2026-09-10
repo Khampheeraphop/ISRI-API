@@ -18,6 +18,7 @@ export interface QueuedWorkflowEmail {
   relatedWorkOrderId?: string | null;
   relatedPmScheduleId?: string | null;
   relatedRedemptionId?: string | null;
+  dedupeKey?: string | null;
   payload: WorkflowEmailPayload;
   attachments?: EmailAttachment[] | null;
 }
@@ -48,7 +49,7 @@ export class EmailOutboxRepository {
     if (!values.length) return [];
     const { data, error } = await this.db
       .from("email_outbox")
-      .insert(
+      .upsert(
         values.map((item) => ({
           recipient_user_id: item.recipientUserId,
           recipient_email: item.recipientEmail.trim(),
@@ -57,9 +58,11 @@ export class EmailOutboxRepository {
           related_work_order_id: item.relatedWorkOrderId ?? null,
           related_pm_schedule_id: item.relatedPmScheduleId ?? null,
           related_redemption_id: item.relatedRedemptionId ?? null,
+          dedupe_key: item.dedupeKey ?? null,
           payload: item.payload,
           attachments: item.attachments ?? null,
         })),
+        { onConflict: "dedupe_key", ignoreDuplicates: true },
       )
       .select("id");
     if (error) throw error;
