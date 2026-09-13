@@ -22,7 +22,7 @@ export class ProfileRepository {
 
   async updateOnboarding(
     id: string,
-    requestedPosition: string,
+    requestedPosition: AppRole,
     specialties: Specialty[],
   ) {
     const { data, error } = await this.db

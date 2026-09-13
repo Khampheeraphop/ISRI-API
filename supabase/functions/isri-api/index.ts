@@ -915,10 +915,8 @@ Deno.serve(async (req) => {
       const specialties = Array.isArray(body?.technicianSpecialties)
         ? body.technicianSpecialties
         : [];
-      if (requestedPosition.length < 2 || requestedPosition.length > 120) {
-        throw new HttpError(
-          "Requested position must contain 2–120 characters.",
-        );
+      if (!allowedRoles.has(requestedPosition as AppRole)) {
+        throw new HttpError("Requested position is invalid.");
       }
       if (
         !specialties.every((value: unknown) =>
@@ -930,8 +928,8 @@ Deno.serve(async (req) => {
       return json({
         data: await profiles.updateOnboarding(
           profile.id,
-          requestedPosition,
-          specialties,
+          requestedPosition as AppRole,
+          requestedPosition === "technician" ? specialties : [],
         ),
       });
     }
