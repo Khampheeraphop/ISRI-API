@@ -1,6 +1,8 @@
 # ISRI API
 
-คู่มือตั้งค่า AI Safety Assistant อยู่ที่ [AI_ASSESSMENT_SETUP.md](./AI_ASSESSMENT_SETUP.md)
+คู่มือตั้งค่าแชทบอทสำหรับทั้ง 4 บทบาทอยู่ที่ [CHAT_SETUP.md](./CHAT_SETUP.md)
+
+AI ช่วยประเมินเหตุเดิมถูกถอดออกจากโค้ดและลบ Edge Function `isri-ai-assessment` ออกจาก Supabase Cloud แล้ว โดยเก็บ migration ของตาราง `ai_incident_assessments` ไว้เป็นประวัติฐานข้อมูล
 
 Supabase เป็น backend ของระบบ ISRI โดย browser ใช้เฉพาะ publishable key และเรียกข้อมูลผ่าน Edge Function `isri-api` ส่วน `service_role` อยู่ฝั่ง server เท่านั้น
 
@@ -26,17 +28,17 @@ npx supabase db reset
 
 บัญชี local สำหรับสาธิตใช้รหัสผ่านเดียวกัน `IsriDemo123!`:
 
-| บทบาท | อีเมล |
-|---|---|
-| Admin | `admin@isri.local` |
+| บทบาท      | อีเมล                            |
+| ---------- | -------------------------------- |
+| Admin      | `admin@isri.local`               |
 | Dispatcher | `siriporn.dispatcher@isri.local` |
-| Technician | `somchai.electric@isri.local` |
-| Technician | `anucha.maintenance@isri.local` |
-| Reporter | `nattaya.nurse@isri.local` |
-| Reporter | `kanokwan.records@isri.local` |
-| Reporter | `pimchanok.pharmacy@isri.local` |
-| รออนุมัติ | `thitiporn.pending@isri.local` |
-| ถูกปฏิเสธ | `wittaya.external@isri.local` |
+| Technician | `somchai.electric@isri.local`    |
+| Technician | `anucha.maintenance@isri.local`  |
+| Reporter   | `nattaya.nurse@isri.local`       |
+| Reporter   | `kanokwan.records@isri.local`    |
+| Reporter   | `pimchanok.pharmacy@isri.local`  |
+| รออนุมัติ  | `thitiporn.pending@isri.local`   |
+| ถูกปฏิเสธ  | `wittaya.external@isri.local`    |
 
 บัญชีเหล่านี้มีไว้สำหรับ local development หรือ Cloud Demo ที่ล้างทิ้งได้เท่านั้น ระบบ Production จริงต้องใช้ Google OAuth และไม่ใช้รหัสผ่าน Seed
 
@@ -53,7 +55,7 @@ npx supabase db reset
 
 การ seed ไม่สร้างรหัสผ่านให้ Gmail จริง เพราะ token และตัวตน OAuth ต้องมาจาก Google ตาราง `bootstrap_admins` เก็บอีเมลผู้ดูแลเริ่มต้นและไม่เปิดให้ browser อ่าน
 
-คู่มือ Local, การล้าง Cloud Demo และลง Seed ผ่าน SQL Editor, Production, Google OAuth, Netlify/Nginx และเช็กลิสต์หลัง Deploy อยู่ที่ [DEPLOYMENT_GUIDE.md](../web/DEPLOYMENT_GUIDE.md)
+คู่มือ Local, การล้าง Cloud Demo และลง Seed ผ่าน SQL Editor, Production, Google OAuth, Cloudflare Pages/Nginx และเช็กลิสต์หลัง Deploy อยู่ที่ [DEPLOYMENT_GUIDE.md](../web/DEPLOYMENT_GUIDE.md)
 
 ## Realtime
 

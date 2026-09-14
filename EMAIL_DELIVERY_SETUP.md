@@ -10,7 +10,7 @@
 ```text
 RESEND_API_KEY=re_...
 EMAIL_FROM=ISRI <noreply@your-verified-domain.com>
-APP_URL=https://isri.netlify.app
+APP_URL=https://www.isri-care.xyz
 ```
 
 - `RESEND_API_KEY` ต้องเป็นคีย์สำหรับส่งอีเมลเท่านั้น และเก็บไว้ใน Supabase Secrets

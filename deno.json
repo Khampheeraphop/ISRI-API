@@ -1,6 +1,6 @@
 {
   "tasks": {
-    "check": "deno check supabase/functions/isri-api/index.ts supabase/functions/isri-ai-assessment/index.ts supabase/functions/pm-reminder-cron/index.ts supabase/functions/resend-webhook/index.ts",
+    "check": "deno check supabase/functions/isri-api/index.ts supabase/functions/isri-chat/index.ts supabase/functions/pm-reminder-cron/index.ts supabase/functions/resend-webhook/index.ts",
     "test": "deno test --allow-env=WEB_ORIGIN --no-check tests"
   }
 }
