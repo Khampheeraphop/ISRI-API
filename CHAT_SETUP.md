@@ -21,7 +21,7 @@
 
 ```env
 GEMINI_API_KEY=<API key ของโครงการ Gemini>
-GEMINI_CHAT_MODEL=gemini-3.6-flash
+GEMINI_CHAT_MODEL=gemini-3.5-flash-lite
 ISRI_CHAT_ENABLED=true
 ```
 
