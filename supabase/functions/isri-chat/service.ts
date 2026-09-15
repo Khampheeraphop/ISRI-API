@@ -31,7 +31,7 @@ function providerError(status: number) {
     return "ไม่พบโมเดล Gemini ที่ตั้งค่าไว้ (GEMINI_MODEL_NOT_FOUND)";
   }
   if (status === 429) {
-    return "ผู้ช่วย AI มีคำขอจำนวนมาก กรุณาลองใหม่ภายหลัง (GEMINI_QUOTA)";
+    return "โควตา Gemini ของ API key นี้หมดหรือถูกจำกัด กรุณาเปลี่ยน GEMINI_API_KEY ใน Supabase แล้วลองใหม่ (GEMINI_QUOTA)";
   }
   return "ผู้ช่วย AI ไม่พร้อมใช้งานในขณะนี้ กรุณาลองใหม่ภายหลัง (GEMINI_UNAVAILABLE)";
 }

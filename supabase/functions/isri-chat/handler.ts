@@ -76,20 +76,6 @@ export function createChatHandler(deps: {
           503,
         );
       const messages = parseMessages(await boundedJson(req));
-      // A database counter is shared across Edge workers; it cannot be reset by opening another tab.
-      const quota = await db.rpc("consume_isri_chat_quota", {
-        p_user_id: auth.data.user.id,
-      });
-      if (quota.error)
-        throw new HttpError(
-          "ผู้ช่วยยังไม่พร้อมให้บริการ กรุณาติดต่อผู้ดูแลระบบ",
-          503,
-        );
-      if (quota.data !== true)
-        throw new HttpError(
-          "ใช้ผู้ช่วยถึงขีดจำกัดแล้ว กรุณาลองใหม่ภายหลัง (10 ครั้งต่อนาที และ 100 ครั้งต่อวัน)",
-          429,
-        );
       const repo = new ChatRepository(
         db,
         auth.data.user.id,
