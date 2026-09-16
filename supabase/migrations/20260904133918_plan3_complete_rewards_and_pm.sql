@@ -16,7 +16,18 @@ where r.point_cost is null and t.transaction_type = 'redeem'
 
 -- Abort rather than guess a historical charge if reconciliation is ambiguous.
 alter table public.reward_redemptions alter column point_cost set not null;
-alter table public.reward_redemptions add constraint reward_redemptions_point_cost_positive check (point_cost > 0);
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_constraint
+    where conname = 'reward_redemptions_point_cost_positive'
+      and conrelid = 'public.reward_redemptions'::regclass
+  ) then
+    alter table public.reward_redemptions
+      add constraint reward_redemptions_point_cost_positive check (point_cost > 0);
+  end if;
+end $$;
 create index if not exists reward_redemptions_approved_by_idx on public.reward_redemptions(approved_by);
 alter table public.reward_redemptions drop constraint reward_redemptions_state_check;
 alter table public.reward_redemptions add constraint reward_redemptions_state_check check (
@@ -91,7 +102,7 @@ begin
   end if;
   select * into v_redemption from public.reward_redemptions where id = p_redemption_id for update;
   if not found then raise exception 'Redemption was not found.'; end if;
-  if not ((v_redemption.status = 'pending' and p_status in ('approved','cancelled'))
+  if not ((v_redemption.status = 'pending' and p_status in ('approved','fulfilled','cancelled'))
     or (v_redemption.status = 'approved' and p_status in ('fulfilled','cancelled'))) then
     raise exception 'This action is not available for the current redemption.';
   end if;
