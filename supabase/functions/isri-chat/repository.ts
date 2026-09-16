@@ -49,11 +49,29 @@ export function rewardProgress(reward: Row, balance: number) {
   return {
     ...reward,
     points_short: Math.max(0, Number(reward.point_cost) - balance),
-    can_redeem_now: reward.reward_period === "standard" &&
+    can_redeem_now:
+      reward.reward_period === "standard" &&
       reward.is_active === true &&
       Number(reward.stock) > 0 &&
       balance >= Number(reward.point_cost),
   };
+}
+
+function publicChatRow(topic: string, row: Row): Row {
+  if (topic !== "rewards" && topic !== "redemptions") return row;
+  const safe = { ...row };
+  delete safe.id;
+  if (
+    topic === "redemptions" &&
+    safe.reward_items &&
+    typeof safe.reward_items === "object" &&
+    !Array.isArray(safe.reward_items)
+  ) {
+    const reward = { ...(safe.reward_items as Row) };
+    delete reward.id;
+    safe.reward_items = reward;
+  }
+  return safe;
 }
 
 export class ChatRepository {
@@ -82,26 +100,25 @@ export class ChatRepository {
         statuses = incidentStatuses;
         dateColumn = "created_at";
         searchColumn = "ticket_number";
-        path = q.topic === "incidents"
-          ? "/incidents/mine"
-          : q.topic === "dispatch_queue"
-          ? "/dispatch"
-          : "/";
+        path =
+          q.topic === "incidents"
+            ? "/incidents/mine"
+            : q.topic === "dispatch_queue"
+              ? "/dispatch"
+              : "/";
         break;
       case "work_orders":
         table = "work_orders";
-        columns =
-          `id,incident_id,status,assigned_at,updated_at,respond_due_at,resolve_due_at,incidents!inner(ticket_number,location_label,asset_name,description,urgency_verified)${
-            this.role === "technician"
-              ? ",work_order_assignees!inner(technician_id)"
-              : ""
-          }`;
+        columns = `id,incident_id,status,assigned_at,updated_at,respond_due_at,resolve_due_at,incidents!inner(ticket_number,location_label,asset_name,description,urgency_verified)${
+          this.role === "technician"
+            ? ",work_order_assignees!inner(technician_id)"
+            : ""
+        }`;
         statuses = orderStatuses;
         dateColumn = "assigned_at";
         searchColumn = "incidents.ticket_number";
-        path = this.role === "technician"
-          ? "/work-orders"
-          : "/dispatch/reviews";
+        path =
+          this.role === "technician" ? "/work-orders" : "/dispatch/reviews";
         break;
       case "pm":
         table = "pm_schedules";
@@ -165,9 +182,10 @@ export class ChatRepository {
         query = query.eq("status", "pending_assignment");
       }
       if (q.topic === "work_orders") {
-        query = this.role === "technician"
-          ? query.eq("work_order_assignees.technician_id", this.actorId)
-          : query.eq("assigned_by", this.actorId);
+        query =
+          this.role === "technician"
+            ? query.eq("work_order_assignees.technician_id", this.actorId)
+            : query.eq("assigned_by", this.actorId);
       }
       if (q.topic === "pm" && this.role === "technician") {
         query = query.eq("assigned_technician_id", this.actorId);
@@ -191,9 +209,10 @@ export class ChatRepository {
         );
       }
       if (bounds.until) {
-        query = q.topic === "campaigns"
-          ? query.lte(dateColumn, q.until)
-          : query.lt(dateColumn, bounds.until);
+        query =
+          q.topic === "campaigns"
+            ? query.lte(dateColumn, q.until)
+            : query.lt(dateColumn, bounds.until);
       }
       return query;
     };
@@ -305,14 +324,18 @@ export class ChatRepository {
         hasMore: start + rows.length < result.count,
         balance,
         history,
-        rows: q.topic === "users" ? [] : rows,
-        scope: q.topic === "work_orders"
-          ? this.role === "technician"
-            ? "งานที่ยังมีชื่ออยู่ในทีมของคุณ"
-            : "งานที่คุณเป็นผู้จัดสรร"
-          : q.topic === "dispatch_queue"
-          ? "คิวรอจัดสรร"
-          : undefined,
+        rows:
+          q.topic === "users"
+            ? []
+            : rows.map((row) => publicChatRow(q.topic, row)),
+        scope:
+          q.topic === "work_orders"
+            ? this.role === "technician"
+              ? "งานที่ยังมีชื่ออยู่ในทีมของคุณ"
+              : "งานที่คุณเป็นผู้จัดสรร"
+            : q.topic === "dispatch_queue"
+              ? "คิวรอจัดสรร"
+              : undefined,
       }),
       sources,
     };
