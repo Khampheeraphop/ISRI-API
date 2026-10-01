@@ -4,25 +4,32 @@ import { createChatHandler } from "../supabase/functions/isri-chat/handler.ts";
 
 const actor = "10000000-0000-4000-8000-000000000001";
 function setup(
-  options: { invalid?: boolean; pending?: boolean; configured?: boolean } = {},
+  options: {
+    invalid?: boolean;
+    pending?: boolean;
+    configured?: boolean;
+    role?: "reporter" | "dispatcher";
+  } = {},
 ) {
   let modelCalls = 0;
   const client = createClient("https://fixture.invalid", "fixture-key", {
     global: {
       fetch: async (input) => {
         const url = new URL(String(input));
-        if (url.pathname.endsWith("/auth/v1/user"))
+        if (url.pathname.endsWith("/auth/v1/user")) {
           return options.invalid
             ? Response.json({ message: "invalid" }, { status: 401 })
             : Response.json({ id: actor });
-        if (url.pathname.endsWith("/profiles"))
+        }
+        if (url.pathname.endsWith("/profiles")) {
           return Response.json([
             {
               id: actor,
-              role: "reporter",
+              role: options.role ?? "reporter",
               approval_status: options.pending ? "pending" : "approved",
             },
           ]);
+        }
         throw new Error(`Unexpected database access: ${url.pathname}`);
       },
     },
@@ -51,9 +58,9 @@ function setup(
         method: "POST",
         headers: auth
           ? {
-              Authorization: "Bearer fixture-user-token",
-              "Content-Type": "application/json",
-            }
+            Authorization: "Bearer fixture-user-token",
+            "Content-Type": "application/json",
+          }
           : {},
         body: JSON.stringify(body),
       }),
@@ -64,11 +71,13 @@ function setup(
 Deno.test(
   "chat endpoint rejects missing/invalid JWT and unapproved users before AI",
   async () => {
-    for (const [options, auth, expected] of [
-      [{}, false, 401],
-      [{ invalid: true }, true, 401],
-      [{ pending: true }, true, 403],
-    ] as const) {
+    for (
+      const [options, auth, expected] of [
+        [{}, false, 401],
+        [{ invalid: true }, true, 401],
+        [{ pending: true }, true, 403],
+      ] as const
+    ) {
       const context = setup(options);
       assertEquals((await context.post(undefined, auth)).status, expected);
       assertEquals(context.modelCalls(), 0);
@@ -89,6 +98,20 @@ Deno.test("chat endpoint rejects spoofed identity", async () => {
     400,
   );
   assertEquals(spoofed.modelCalls(), 0);
+});
+
+Deno.test("dispatch advice requires an approved dispatcher", async () => {
+  const reporter = setup({ role: "reporter" });
+  assertEquals(
+    (
+      await reporter.post({
+        action: "dispatch_assessment",
+        incidentId: "10000000-0000-4000-8000-000000000001",
+      })
+    ).status,
+    403,
+  );
+  assertEquals(reporter.modelCalls(), 0);
 });
 
 Deno.test(
