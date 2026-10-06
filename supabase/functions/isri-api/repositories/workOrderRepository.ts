@@ -77,7 +77,7 @@ export class WorkOrderRepository {
     let query = this.db
       .from("work_orders")
       .select(
-        "id, incident_id, status, respond_due_at, resolve_due_at, assigned_at, updated_at, incidents(ticket_number, location_label, asset_name, category, urgency_reported, description, status)",
+        "id, incident_id, status, respond_due_at, resolve_due_at, assigned_at, updated_at, incidents(location_id, ticket_number, location_label, asset_name, category, urgency_reported, description, status)",
       )
       .in("id", workOrderIds);
     query = options.completedOnly
@@ -103,7 +103,7 @@ export class WorkOrderRepository {
     const { data, error } = await this.db
       .from("work_orders")
       .select(
-        "id, incident_id, status, respond_due_at, resolve_due_at, assigned_at, updated_at, incidents(ticket_number, location_label, asset_name, category, urgency_reported, description, status)",
+        "id, incident_id, status, respond_due_at, resolve_due_at, assigned_at, updated_at, incidents(location_id, ticket_number, location_label, asset_name, category, urgency_reported, description, status)",
       )
       .eq("assigned_by", dispatcherId)
       .eq("status", "done")
@@ -243,7 +243,7 @@ export class WorkOrderRepository {
     let query = this.db
       .from("work_orders")
       .select(
-        "id, incident_id, technician_id, assigned_by, assigned_at, status, respond_due_at, resolve_due_at, created_at, incidents(ticket_number, location_label, asset_name, category, urgency_reported, description, status)",
+        "id, incident_id, technician_id, assigned_by, assigned_at, status, respond_due_at, resolve_due_at, created_at, incidents(location_id, ticket_number, location_label, asset_name, category, urgency_reported, description, status)",
       )
       .eq("id", id);
     if (actorRole === "dispatcher") query = query.eq("assigned_by", actorId);
@@ -258,7 +258,7 @@ export class WorkOrderRepository {
     let query = this.db
       .from("work_orders")
       .select(
-        "id, incident_id, technician_id, assigned_by, assigned_at, status, respond_due_at, resolve_due_at, incidents(ticket_number, location_label, asset_name, category, urgency_reported, description, status)",
+        "id, incident_id, technician_id, assigned_by, assigned_at, status, respond_due_at, resolve_due_at, incidents(location_id, ticket_number, location_label, asset_name, category, urgency_reported, description, status)",
       )
       .in("status", ["pending_parts_approval", "pending_repair_approval"])
       .order("assigned_at", { ascending: true });

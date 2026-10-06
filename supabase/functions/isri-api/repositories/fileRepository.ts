@@ -3,6 +3,7 @@ import type { DatabaseClient } from "../_shared/types.ts";
 export const incidentAttachmentBucket = "incident-attachments";
 export const workOrderAttachmentBucket = "work-order-attachments";
 export const rewardImageBucket = "reward-images";
+export const floorPlanImageBucket = "floor-plan-images";
 export const maxAttachmentBytes = 3 * 1024 * 1024;
 const allowedMimeTypes = new Set(["image/jpeg", "image/png"]);
 
@@ -71,6 +72,35 @@ export class FileRepository {
       .createSignedUploadUrl(objectPath);
     if (error) throw error;
     return { objectPath, token: data.token, bucket: rewardImageBucket };
+  }
+
+  async createFloorPlanImageUpload(input: {
+    userId: string;
+    fileName: string;
+    mimeType: string;
+    sizeBytes: number;
+  }) {
+    const allowed = new Set(["image/jpeg", "image/png", "image/webp"]);
+    if (!allowed.has(input.mimeType))
+      throw new Error("Only JPEG, PNG and WebP images are allowed.");
+    if (
+      !Number.isInteger(input.sizeBytes) ||
+      input.sizeBytes < 1 ||
+      input.sizeBytes > 8 * 1024 * 1024
+    )
+      throw new Error("The floor plan image must not exceed 8 MB.");
+    const extension =
+      input.mimeType === "image/png"
+        ? "png"
+        : input.mimeType === "image/webp"
+          ? "webp"
+          : "jpg";
+    const objectPath = `floor-plans/${input.userId}/${crypto.randomUUID()}.${extension}`;
+    const { data, error } = await this.db.storage
+      .from(floorPlanImageBucket)
+      .createSignedUploadUrl(objectPath);
+    if (error) throw error;
+    return { objectPath, token: data.token, bucket: floorPlanImageBucket };
   }
 
   async createRewardImageRecord(input: {

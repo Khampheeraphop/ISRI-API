@@ -20,6 +20,10 @@ import {
 } from "./_shared/types.ts";
 import { ProfileRepository } from "./repositories/profileRepository.ts";
 import { LocationRepository } from "./repositories/locationRepository.ts";
+import {
+  FloorPlanRepository,
+  type FloorPlanElement,
+} from "./repositories/floorPlanRepository.ts";
 import { IncidentRepository } from "./repositories/incidentRepository.ts";
 import {
   FileRepository,
@@ -128,11 +132,170 @@ function locationInput(body: Record<string, unknown> | null) {
     }
     return value;
   };
+  const assetName = text("assetName", false) || null;
+  const requestedScope = body?.qrScope;
+  const qrScope: "area" | "asset" =
+    requestedScope === "area" || requestedScope === "asset"
+      ? requestedScope
+      : assetName
+        ? "asset"
+        : "area";
+  if (qrScope === "asset" && !assetName) {
+    throw new HttpError("Asset-level QR code requires an asset name.");
+  }
   return {
     building: text("building"),
     floor: text("floor"),
     zone: text("zone"),
-    assetName: text("assetName", false) || null,
+    assetName,
+    qrScope,
+  };
+}
+
+function floorPlanInput(body: Record<string, unknown> | null, userId: string) {
+  const text = (key: string, max: number) => {
+    const value = typeof body?.[key] === "string" ? body[key].trim() : "";
+    if (!value || value.length > max)
+      throw new HttpError("Floor plan data is invalid.");
+    return value;
+  };
+  const canvasWidth = Number(body?.canvasWidth);
+  const canvasHeight = Number(body?.canvasHeight);
+  if (
+    !Number.isInteger(canvasWidth) ||
+    canvasWidth < 600 ||
+    canvasWidth > 5000 ||
+    !Number.isInteger(canvasHeight) ||
+    canvasHeight < 400 ||
+    canvasHeight > 5000
+  )
+    throw new HttpError("Floor plan canvas size is invalid.");
+  const rawLayout = body?.layout;
+  const rawElements =
+    rawLayout && typeof rawLayout === "object" && "elements" in rawLayout
+      ? (rawLayout as { elements?: unknown }).elements
+      : null;
+  if (!Array.isArray(rawElements) || rawElements.length > 300) {
+    throw new HttpError("Floor plan layout is invalid.");
+  }
+  const elementTypes = new Set(["room", "area", "asset", "label"]);
+  const elements: FloorPlanElement[] = rawElements.map((raw) => {
+    if (!raw || typeof raw !== "object")
+      throw new HttpError("Floor plan element is invalid.");
+    const value = raw as Record<string, unknown>;
+    const type = typeof value.type === "string" ? value.type : "";
+    const name = typeof value.name === "string" ? value.name.trim() : "";
+    const x = Number(value.x);
+    const y = Number(value.y);
+    const width = Number(value.width);
+    const height = Number(value.height);
+    const color = typeof value.color === "string" ? value.color : "";
+    const fontSize = value.fontSize === undefined
+      ? undefined
+      : Number(value.fontSize);
+    if (
+      typeof value.id !== "string" ||
+      value.id.length < 1 ||
+      value.id.length > 100 ||
+      !elementTypes.has(type) ||
+      !name ||
+      name.length > 160 ||
+      ![x, y, width, height].every(Number.isFinite) ||
+      x < 0 ||
+      x > 100 ||
+      y < 0 ||
+      y > 100 ||
+      width <= 0 ||
+      width > 100 ||
+      height <= 0 ||
+      height > 100 ||
+      x + width > 100.001 ||
+      y + height > 100.001 ||
+      !/^#[0-9a-f]{6}$/i.test(color) ||
+      (fontSize !== undefined &&
+        (!Number.isFinite(fontSize) || fontSize < 1 || fontSize > 8)) ||
+      !(
+        value.locationId === null ||
+        value.locationId === undefined ||
+        (typeof value.locationId === "string" &&
+          /^[0-9a-f-]{36}$/i.test(value.locationId))
+      ) ||
+      !(
+        value.parentId === null ||
+        value.parentId === undefined ||
+        (typeof value.parentId === "string" && value.parentId.length <= 100)
+      )
+    )
+      throw new HttpError("Floor plan element is invalid.");
+    return {
+      id: value.id,
+      type: type as FloorPlanElement["type"],
+      name,
+      x,
+      y,
+      width,
+      height,
+      color,
+      fontSize,
+      locationId:
+        typeof value.locationId === "string" ? value.locationId : null,
+      parentId: typeof value.parentId === "string" ? value.parentId : null,
+    };
+  });
+  const elementsById = new Map(elements.map((element) => [element.id, element]));
+  if (elementsById.size !== elements.length) {
+    throw new HttpError("Floor plan element IDs must be unique.");
+  }
+  for (const element of elements) {
+    if (!element.parentId) continue;
+    const parent = elementsById.get(element.parentId);
+    if (
+      element.type === "room" ||
+      !parent ||
+      parent.type !== "room" ||
+      parent.parentId
+    ) {
+      throw new HttpError("Floor plan room hierarchy is invalid.");
+    }
+  }
+  const backgroundValue = body?.background;
+  let background: {
+    bucket: string;
+    objectPath: string;
+    fileName: string;
+  } | null = null;
+  if (backgroundValue !== null && backgroundValue !== undefined) {
+    if (!backgroundValue || typeof backgroundValue !== "object") {
+      throw new HttpError("Floor plan background is invalid.");
+    }
+    const value = backgroundValue as Record<string, unknown>;
+    const objectPath =
+      typeof value.objectPath === "string" ? value.objectPath : "";
+    const fileName =
+      typeof value.fileName === "string" ? value.fileName.trim() : "";
+    if (
+      value.bucket !== "floor-plan-images" ||
+      !objectPath.startsWith(`floor-plans/${userId}/`) ||
+      !fileName ||
+      fileName.length > 255
+    )
+      throw new HttpError("Floor plan background is invalid.");
+    background = { bucket: "floor-plan-images", objectPath, fileName };
+  }
+  return {
+    id:
+      typeof body?.id === "string" && /^[0-9a-f-]{36}$/i.test(body.id)
+        ? body.id
+        : undefined,
+    building: text("building", 120),
+    floor: text("floor", 60),
+    name: text("name", 180),
+    canvasWidth,
+    canvasHeight,
+    layout: { elements },
+    background,
+    isPublished: body?.isPublished === true,
+    userId,
   };
 }
 
@@ -250,6 +413,7 @@ Deno.serve(async (req) => {
     const { pathname, url } = parsePath(req);
     const { db, profile, profiles } = await requireSession(req);
     const locations = new LocationRepository(db);
+    const floorPlans = new FloorPlanRepository(db);
     const incidents = new IncidentRepository(db);
     const files = new FileRepository(db);
     const notifications = new NotificationRepository(db);
@@ -287,6 +451,18 @@ Deno.serve(async (req) => {
           : null,
       };
     };
+
+    const withFloorPlanBackground = async (plan: Record<string, unknown>) => ({
+      ...plan,
+      background_url:
+        typeof plan.background_bucket === "string" &&
+        typeof plan.background_object_path === "string"
+          ? await files.createSignedReadUrl(
+              plan.background_bucket,
+              plan.background_object_path,
+            )
+          : null,
+    });
 
     const withCampaignRewardImage = async (
       campaign: Record<string, unknown>,
@@ -938,6 +1114,84 @@ Deno.serve(async (req) => {
       requireApproved(profile);
       return json({ data: await locations.list() });
     }
+    if (req.method === "GET" && pathname === "/floor-plans") {
+      requireApproved(profile);
+      const plans = await floorPlans.list();
+      return json({
+        data: await Promise.all(
+          plans
+            .filter((plan) => profile.role === "admin" || plan.is_published)
+            .map((plan) =>
+              withFloorPlanBackground(plan as Record<string, unknown>),
+            ),
+        ),
+      });
+    }
+    const floorPlanMatch = pathname.match(/^\/floor-plans\/([0-9a-f-]{36})$/i);
+    if (req.method === "GET" && floorPlanMatch) {
+      requireApproved(profile);
+      const plan = await floorPlans.findById(floorPlanMatch[1]);
+      if (!plan || (profile.role !== "admin" && !plan.is_published)) {
+        throw new HttpError("Floor plan was not found.", 404);
+      }
+      return json({
+        data: await withFloorPlanBackground(plan as Record<string, unknown>),
+      });
+    }
+    const floorPlanVersionsMatch = pathname.match(
+      /^\/admin\/floor-plans\/([0-9a-f-]{36})\/versions$/i,
+    );
+    if (req.method === "GET" && floorPlanVersionsMatch) {
+      requireAdmin(profile);
+      return json({
+        data: await floorPlans.listVersions(floorPlanVersionsMatch[1]),
+      });
+    }
+    if (req.method === "POST" && pathname === "/uploads/floor-plan-images") {
+      requireAdmin(profile);
+      const body = await parseJson(req);
+      try {
+        return json({
+          data: await files.createFloorPlanImageUpload({
+            userId: profile.id,
+            fileName: typeof body?.fileName === "string" ? body.fileName : "",
+            mimeType: typeof body?.mimeType === "string" ? body.mimeType : "",
+            sizeBytes: typeof body?.sizeBytes === "number" ? body.sizeBytes : 0,
+          }),
+        });
+      } catch (cause) {
+        throw new HttpError(
+          cause instanceof Error
+            ? cause.message
+            : "Floor plan image is invalid.",
+        );
+      }
+    }
+    if (req.method === "POST" && pathname === "/admin/floor-plans") {
+      requireAdmin(profile);
+      try {
+        const saved = await floorPlans.save(
+          floorPlanInput(await parseJson(req), profile.id),
+        );
+        return json(
+          {
+            data: await withFloorPlanBackground(
+              saved as Record<string, unknown>,
+            ),
+          },
+          201,
+        );
+      } catch (cause) {
+        if (cause instanceof HttpError) throw cause;
+        if (hasDatabaseCode(cause, "23505")) {
+          throw new HttpError(
+            "This building and floor already have a floor plan.",
+            409,
+          );
+        }
+        throw cause;
+      }
+    }
     if (req.method === "GET" && pathname.startsWith("/locations/code/")) {
       requireApproved(profile);
       const location = await locations.findByCode(
@@ -975,8 +1229,32 @@ Deno.serve(async (req) => {
     }
     if (req.method === "DELETE" && locationMatch) {
       requireAdmin(profile);
-      await locations.delete(locationMatch[1]);
-      return json({ data: { id: locationMatch[1] } });
+      const locationId = locationMatch[1];
+      const location = await locations.findById(locationId);
+      if (!location) throw new HttpError("Location was not found.", 404);
+      if (await locations.isInUse(locationId)) {
+        throw new HttpError(
+          "QR Code กำลังถูกใช้งานอยู่ ไม่สามารถลบได้",
+          409,
+        );
+      }
+      try {
+        await locations.delete(locationId);
+      } catch (cause) {
+        if (
+          cause &&
+          typeof cause === "object" &&
+          "code" in cause &&
+          cause.code === "23503"
+        ) {
+          throw new HttpError(
+            "QR Code กำลังถูกใช้งานอยู่ ไม่สามารถลบได้",
+            409,
+          );
+        }
+        throw cause;
+      }
+      return json({ data: { id: locationId } });
     }
 
     if (req.method === "POST" && pathname === "/uploads/incident-attachments") {
