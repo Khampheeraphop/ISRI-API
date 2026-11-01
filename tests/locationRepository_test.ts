@@ -5,30 +5,14 @@ import { LocationRepository } from "../supabase/functions/isri-api/repositories/
 function repositoryWithUsage({
   incidents = 0,
   schedules = 0,
-  mapLocationIds = [],
 }: {
   incidents?: number;
   schedules?: number;
-  mapLocationIds?: string[];
 }) {
   const db = {
     from(table: string) {
       return {
         select(_columns: string, options?: { head?: boolean }) {
-          if (table === "floor_plans") {
-            return Promise.resolve({
-              data: [
-                {
-                  layout: {
-                    elements: mapLocationIds.map((locationId) => ({
-                      locationId,
-                    })),
-                  },
-                },
-              ],
-              error: null,
-            });
-          }
           return {
             eq() {
               return Promise.resolve({
@@ -47,7 +31,7 @@ function repositoryWithUsage({
 }
 
 Deno.test(
-  "location usage protects QR codes referenced by operations or a floor plan",
+  "location usage protects QR codes referenced by incidents or PM schedules",
   async () => {
     const locationId = "11111111-1111-4111-8111-111111111111";
 
@@ -58,12 +42,6 @@ Deno.test(
     );
     assertEquals(
       await repositoryWithUsage({ schedules: 1 }).isInUse(locationId),
-      true,
-    );
-    assertEquals(
-      await repositoryWithUsage({ mapLocationIds: [locationId] }).isInUse(
-        locationId,
-      ),
       true,
     );
   },

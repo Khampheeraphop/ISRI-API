@@ -1,7 +1,7 @@
 import type { DatabaseClient } from "../_shared/types.ts";
 
 const columns =
-  "id, code, building, floor, zone, asset_name, qr_scope, created_at, updated_at";
+  "id, code, building, floor, zone, asset_name, created_at, updated_at";
 
 export class LocationRepository {
   constructor(private readonly db: DatabaseClient) {}
@@ -42,23 +42,17 @@ export class LocationRepository {
     floor: string;
     zone: string;
     assetName: string | null;
-    qrScope: "area" | "asset";
   }) {
     const { data, error } = await this.db
       .from("managed_locations")
       .insert({
         // The QR token is an opaque, server-generated identifier. It is never
         // entered by an administrator and remains stable when location details change.
-        code: `LOC-${crypto
-          .randomUUID()
-          .replaceAll("-", "")
-          .slice(0, 12)
-          .toUpperCase()}`,
+        code: `LOC-${crypto.randomUUID().replaceAll("-", "").slice(0, 12).toUpperCase()}`,
         building: input.building,
         floor: input.floor,
         zone: input.zone,
         asset_name: input.assetName,
-        qr_scope: input.qrScope,
       })
       .select(columns)
       .single();
@@ -73,7 +67,6 @@ export class LocationRepository {
       floor: string;
       zone: string;
       assetName: string | null;
-      qrScope: "area" | "asset";
     },
   ) {
     const { data, error } = await this.db
@@ -83,7 +76,6 @@ export class LocationRepository {
         floor: input.floor,
         zone: input.zone,
         asset_name: input.assetName,
-        qr_scope: input.qrScope,
       })
       .eq("id", id)
       .select(columns)
@@ -101,7 +93,7 @@ export class LocationRepository {
   }
 
   async isInUse(id: string) {
-    const [incidents, schedules, floorPlans] = await Promise.all([
+    const [incidents, schedules] = await Promise.all([
       this.db
         .from("incidents")
         .select("id", { count: "exact", head: true })
@@ -110,22 +102,10 @@ export class LocationRepository {
         .from("pm_schedules")
         .select("id", { count: "exact", head: true })
         .eq("location_id", id),
-      this.db.from("floor_plans").select("layout"),
     ]);
 
     if (incidents.error) throw incidents.error;
     if (schedules.error) throw schedules.error;
-    if (floorPlans.error) throw floorPlans.error;
-
-    const isPlacedOnFloorPlan = (floorPlans.data ?? []).some((plan) => {
-      const layout = plan.layout as {
-        elements?: Array<{ locationId?: unknown }>;
-      } | null;
-      return (
-        layout?.elements?.some((element) => element.locationId === id) ?? false
-      );
-    });
-
-    return Boolean(incidents.count || schedules.count || isPlacedOnFloorPlan);
+    return Boolean(incidents.count || schedules.count);
   }
 }
